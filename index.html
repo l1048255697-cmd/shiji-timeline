@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>时迹 · 个人事件生命线</title>
+<meta name="description" content="时迹：以真实日期为轴，为每一件事画一条可回看的生命线。记录开始、追踪过程、连接事件、回看时间。">
+<meta name="theme-color" content="#F6F4EE">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2326241F'/%3E%3Ccircle cx='16' cy='16' r='9' stroke='%23F6F4EE' stroke-width='2' fill='none'/%3E%3Cpath d='M16 8.5v7.5l5 3' stroke='%23F6F4EE' stroke-width='2' fill='none'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-in">
+    <a class="logo" href="index.html" aria-label="时迹 首页">
+      <span class="logo-mark">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="12" r="7.4" stroke="#F6F4EE" stroke-width="1.6"/>
+          <path d="M12 6.4v5.6l4 2.4" stroke="#F6F4EE" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+      </span>
+      <span class="logo-txt"><b>时迹</b><i>个人事件生命线</i></span>
+    </a>
+    <div class="nav-links">
+      <a href="#how">怎么用</a>
+      <a href="#caps">核心能力</a>
+      <a href="about.html">关于</a>
+    </div>
+    <div class="nav-right">
+      <a class="btn btn-dark" href="app.html" data-enter>进入工作台 <span class="arw">↗</span></a>
+    </div>
+  </div>
+</nav>
+
+<main>
+  <section class="hero">
+    <div>
+      <span class="eyebrow"><i></i>事件生命线 · 时间记录系统</span>
+      <h1>让每件事有始有终<span class="line2">让每段经历有迹可循</span></h1>
+      <p class="lead">以<strong>真实日期</strong>为轴，给每一件正在做的事画一条<strong>生命线</strong>：什么时候开始、推进到哪一步、和哪些事相连、什么时候收尾。所有记录只存在你自己的浏览器里。</p>
+      <div class="hero-cta">
+        <a class="btn btn-dark" href="app.html" data-enter>打开我的时间线 <span class="arw">→</span></a>
+        <a class="btn btn-ghost" href="#how">先看看它怎么用</a>
+      </div>
+      <div class="tiny">每件事都有始末 · 每一刻都留得下痕迹</div>
+    </div>
+
+    <div class="stage-wrap reveal">
+      <div class="board" id="board" aria-label="时间线示意：三条并行事件生命线">
+        <div class="grid"></div>
+        <div class="hd">
+          <span>主时间轴 · 2026 年 11 月</span>
+          <div class="chips">
+            <span class="chip">进行中 <b style="color:var(--red)">3</b></span>
+            <span class="chip">已结束 <b>1</b></span>
+            <span class="chip">关联 <b>4</b></span>
+          </div>
+        </div>
+        <div class="dates">
+          <div>11.02</div><div>11.06</div><div>11.10</div><div>11.14</div>
+          <div>11.18</div><div>11.22</div><div>11.26</div><div>11.30</div><div>12.04</div><div>12.08</div>
+        </div>
+        <svg class="rel-svg" id="rels" preserveAspectRatio="none" aria-hidden="true"></svg>
+      </div>
+      <div class="board-foot"><span>你的生活 · 你的时间线</span><span>2026 — 往后</span></div>
+    </div>
+  </section>
+
+  <div class="strip">
+    <div class="strip-in"><span>记录开始</span><span>追踪过程</span><span>连接事件</span><span>回看时间</span><span>本地存储</span></div>
+  </div>
+
+  <section class="section" id="how">
+    <div class="sec-head">
+      <span class="sec-no">一</span>
+      <h2>一条时间线，只做三件事</h2>
+      <span class="sub">开始、推进、收尾，不打扰你做事</span>
+    </div>
+    <div class="three reveal">
+      <article>
+        <div class="no">第一步</div>
+        <h3>记下一个开始</h3>
+        <p>一件事只要有一个开始日期就能立起来。起点用绿圆标记，之后每一天都会自动接续。</p>
+      </article>
+      <article>
+        <div class="no">第二步</div>
+        <h3>把推进留在节点上</h3>
+        <p>今天做了什么、卡在哪、得到什么结果，都记在对应的日期上。节点就是这条线上的刻度。</p>
+      </article>
+      <article>
+        <div class="no">第三步</div>
+        <h3>结束并留下结果</h3>
+        <p>结束时写一句最终结果，红圆收口。想复盘时，往回滚一遍就能看清全过程。</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="section" id="caps">
+    <div class="sec-head">
+      <span class="sec-no">二</span>
+      <h2>它能做到的事</h2>
+      <span class="sub">不是甘特图，也不是待办清单</span>
+    </div>
+    <div class="caps reveal">
+      <div class="cap c4">
+        <div class="k">生命周期</div>
+        <h3>三色标记</h3>
+        <p>绿色表示开始、红色表示结束、蓝色表示仍在进行，一眼就能分清哪些还没开始、哪些已经收尾。</p>
+        <div class="demo">
+          <span class="ln" style="background:var(--green)"></span>
+          <span class="p" style="left:9px;border-color:var(--green)"></span>
+          <span class="p" style="left:calc(50% - 6px);border-color:var(--green)"></span>
+          <span class="p" style="right:9px;border-color:var(--red)"></span>
+        </div>
+      </div>
+      <div class="cap c4">
+        <div class="k">进展</div>
+        <h3>日期上的节点</h3>
+        <p>每个节点都带日期、标题、说明与附件，点开就是那一天的完整记录。</p>
+        <div class="tags"><span>日期</span><span>第几天</span><span>附件</span><span>分支</span></div>
+      </div>
+      <div class="cap c4">
+        <div class="k">关系</div>
+        <h3>事件之间怎么连</h3>
+        <p>直接导致、前置条件、提供支持、相互冲突等八种关系，用不同线型把事件连起来。</p>
+        <div class="tags"><span>八种类型</span><span>方向箭头</span><span>关系详情</span></div>
+      </div>
+      <div class="cap c4">
+        <div class="k">回看</div>
+        <h3>历史回放</h3>
+        <p>拖到任意一天，看到当时的状态；所有改动都留痕，可以无损回退。</p>
+        <div class="tags"><span>历史快照</span><span>撤销重做</span><span>导入导出</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="quote reveal">
+    <div class="q">时间不会替你记住细节<br>那就自己把它画出来</div>
+    <div class="sig">时迹 · 个人事件生命线</div>
+  </section>
+
+  <section class="cta" id="cta">
+    <h2 class="reveal">从今天开始，给正在做的事一条线</h2>
+    <p class="reveal">不用注册账号，也不必上传文件。打开就是你的工作台，记录先存在本地，随时可以导出带走。</p>
+    <div class="btns reveal">
+      <a class="btn btn-dark" href="app.html" data-enter>进入我的时间线 <span class="arw">→</span></a>
+      <a class="btn btn-ghost" href="about.html">看看它是什么</a>
+    </div>
+    <div class="note">数据保存在浏览器本地 · 支持整包导出与导入</div>
+  </section>
+</main>
+
+<footer>
+  <div class="foot-in">
+    <a class="logo" href="index.html">
+      <span class="logo-mark">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="12" r="7.4" stroke="#F6F4EE" stroke-width="1.6"/>
+          <path d="M12 6.4v5.6l4 2.4" stroke="#F6F4EE" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+      </span>
+      <span class="logo-txt"><b>时迹</b><i>个人事件生命线</i></span>
+    </a>
+    <span>让每件事有始有终 · 让每段经历有迹可循</span>
+    <div class="right">
+      <a href="app.html" data-enter>进入工作台</a>
+      <a href="about.html">关于</a>
+      <span>2026 — 往后</span>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/home.js"></script>
+</body>
+</html>

@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>关于 · 时迹</title>
+<meta name="description" content="时迹是什么、为什么这样设计、数据存在哪里。">
+<meta name="theme-color" content="#F6F4EE">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2326241F'/%3E%3Ccircle cx='16' cy='16' r='9' stroke='%23F6F4EE' stroke-width='2' fill='none'/%3E%3Cpath d='M16 8.5v7.5l5 3' stroke='%23F6F4EE' stroke-width='2' fill='none'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-in">
+    <a class="logo" href="index.html" aria-label="时迹 首页">
+      <span class="logo-mark">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="12" r="7.4" stroke="#F6F4EE" stroke-width="1.6"/>
+          <path d="M12 6.4v5.6l4 2.4" stroke="#F6F4EE" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+      </span>
+      <span class="logo-txt"><b>时迹</b><i>个人事件生命线</i></span>
+    </a>
+    <div class="nav-links">
+      <a href="index.html#how">怎么用</a>
+      <a href="index.html#caps">核心能力</a>
+      <a class="on" href="about.html">关于</a>
+    </div>
+    <div class="nav-right">
+      <a class="btn btn-dark" href="app.html" data-enter>进入工作台 <span class="arw">↗</span></a>
+    </div>
+  </div>
+</nav>
+
+<main class="page">
+  <span class="eyebrow"><i></i>关于这个工具</span>
+  <h1>时迹</h1>
+  <p class="page-lead">一个个人事件生命线记录工具。它不替你安排任务，只负责把已经发生和正在发生的事，按真实日期画成一条看得懂的线。</p>
+
+  <h2>为什么不是待办清单</h2>
+  <p>待办清单擅长回答「接下来做什么」，却不擅长回答「这件事走到哪一步了」。真正需要回看的时候，往往想知道的是：起点在哪、中间经历了什么、和别的事有什么关系、最后的结果是什么。时迹把这些问题都放在同一条时间线上。</p>
+
+  <h2>三条基本规则</h2>
+  <ul>
+    <li>时间轴按真实日期展开，不压缩、不跨档，今天的位置永远真实。</li>
+    <li>一件事的生命线由开始日期、进展节点、结束日期和最终结果四部分组成。</li>
+    <li>事件之间可以建立关系，关系有方向、有类型，可以点击查看详情。</li>
+  </ul>
+
+  <h2>八种事件关系</h2>
+  <div class="kv">
+    <b>直接导致</b><span>前者发生直接引出后者的结果</span>
+    <b>前置条件</b><span>前者未完成，后者无法开始</span>
+    <b>后续发展</b><span>后者是前者在时间上的延续</span>
+    <b>同时进行</b><span>两条事件在同一时间段并行</span>
+    <b>提供支持</b><span>前者为后者提供资源、信息或能力</span>
+    <b>相互冲突</b><span>两者在时间或资源上互相挤占</span>
+    <b>子事件</b><span>由主事件派生出的从属事件</span>
+    <b>相互参照</b><span>互为背景，彼此引用</span>
+  </div>
+
+  <div class="rule"></div>
+
+  <h2>数据存在哪里</h2>
+  <p>所有内容保存在你当前浏览器的本地存储中，不上传、不经过任何服务器。换设备或换浏览器时，用「设置与数据」里的导出功能带走整包数据，在新环境导入即可。</p>
+  <p>浏览器清理缓存或站点数据会连同记录一起清空，所以建议定期导出备份。</p>
+
+  <h2>适合用来记录什么</h2>
+  <ul>
+    <li>正在进行的一个项目：从立项到上线</li>
+    <li>一段学习计划：每天推进了哪一章</li>
+    <li>一个生活习惯：什么时候开始、坚持了多久</li>
+    <li>几件互相牵扯的事：谁在等谁、谁在挤占谁的时间</li>
+  </ul>
+
+  <div style="margin-top:44px;display:flex;gap:12px;flex-wrap:wrap">
+    <a class="btn btn-dark" href="app.html" data-enter>进入工作台 <span class="arw">→</span></a>
+    <a class="btn btn-ghost" href="index.html">回到首页</a>
+  </div>
+</main>
+
+<footer>
+  <div class="foot-in">
+    <a class="logo" href="index.html">
+      <span class="logo-mark">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="12" r="7.4" stroke="#F6F4EE" stroke-width="1.6"/>
+          <path d="M12 6.4v5.6l4 2.4" stroke="#F6F4EE" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+      </span>
+      <span class="logo-txt"><b>时迹</b><i>个人事件生命线</i></span>
+    </a>
+    <span>让每件事有始有终 · 让每段经历有迹可循</span>
+    <div class="right">
+      <a href="app.html" data-enter>进入工作台</a>
+      <span>2026 — 往后</span>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/home.js"></script>
+</body>
+</html>
