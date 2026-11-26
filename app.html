@@ -342,17 +342,18 @@ input,textarea,select{font-family:inherit;}
 .gate-btns{display:flex;gap:8px;margin-top:4px;}
 .gate-btns .btn{flex:1;justify-content:center;}
 .gate-foot{font-size:10px;color:var(--muted);line-height:1.8;margin:14px 0 0;text-align:center;}
-.modal-card{width:440px;max-height:86vh;overflow:auto;background:var(--bg2);border-radius:14px;box-shadow:0 40px 80px -30px rgba(30,28,25,.5);border:1px solid var(--line);animation:rise .22s ease-out both;}
+.modal-card{width:480px;max-height:86vh;overflow:auto;background:var(--bg2);border-radius:14px;box-shadow:0 40px 80px -30px rgba(30,28,25,.5);border:1px solid var(--line);animation:rise .22s ease-out both;}
 @keyframes rise{from{opacity:0;transform:translateY(10px) scale(.985);}to{opacity:1;transform:none;}}
 .modal-head{display:flex;align-items:center;justify-content:space-between;padding:18px 20px 0;}
 .modal-head h3{font-family:'Noto Serif SC',serif;font-size:16.5px;margin:0;font-weight:600;letter-spacing:.04em;}
 .modal-desc{font-size:11px;color:var(--muted);margin:7px 20px 0;line-height:1.6;}
 .modal-body{padding:14px 20px 4px;display:flex;flex-direction:column;gap:12px;}
 .field{display:flex;flex-direction:column;gap:5px;}
-.field label{font-size:10px;letter-spacing:.1em;color:var(--muted);}
+.field label{font-size:10px;letter-spacing:.1em;color:var(--muted);display:flex;justify-content:space-between;gap:8px;}
+.field label .fcnt{letter-spacing:0;color:#A9A292;font-variant-numeric:tabular-nums;}
 .field input[type=text],.field input[type=date],.field textarea,.field select{width:100%;border:1px solid var(--line);border-radius:9px;padding:8px 10px;font-size:12.5px;background:#fff;color:var(--ink);outline:none;transition:.15s;}
 .field input:focus,.field textarea:focus,.field select:focus{border-color:#B9B1A0;box-shadow:0 0 0 3px rgba(30,28,25,.05);}
-.field textarea{resize:vertical;min-height:58px;line-height:1.6;}
+.field textarea{resize:vertical;min-height:120px;line-height:1.72;}
 .swatches{display:flex;gap:7px;flex-wrap:wrap;}
 .swatch{width:24px;height:24px;border-radius:50%;border:2px solid transparent;transition:.15s;}
 .swatch.on{border-color:var(--ink);transform:scale(1.06);}
@@ -404,7 +405,7 @@ input,textarea,select{font-family:inherit;}
 }
 
 /* ================= v3 新增：聚合刻度 / 只读 / 审计 / 移动端 ================= */
-.modal-card{width:440px;max-width:94vw;}
+.modal-card{width:480px;max-width:94vw;}
 .modal-card.wide{width:560px;}
 .lhCard.pin{box-shadow:inset 0 0 0 1px rgba(140,134,123,.18);}
 .chip.pinned{outline:1px solid var(--c15);}
@@ -2688,7 +2689,11 @@ const UI = (() => {
     if (f.type === 'text') return `<div class="field"><label>${f.label}</label><input type="text" data-key="${f.key}" value="${esc(v)}" placeholder="${esc(f.placeholder||'')}"></div>`;
     if (f.type === 'date') return `<div class="field"><label>${f.label}</label><input type="date" data-key="${f.key}" value="${esc(v)}"></div>`;
     if (f.type === 'time') return `<div class="field"><label>${f.label}</label><input type="time" data-key="${f.key}" value="${esc(v || '00:00')}"></div>`;
-    if (f.type === 'textarea') return `<div class="field"><label>${f.label}</label><textarea data-key="${f.key}" placeholder="${esc(f.placeholder||'')}">${esc(v)}</textarea></div>`;
+    if (f.type === 'textarea') {
+      const rows = f.rows || 4;
+      const cnt = f.count ? `<span class="fcnt">${[...v].length} 字</span>` : '';
+      return `<div class="field"><label><span>${f.label}</span>${cnt}</label><textarea data-key="${f.key}" data-autogrow="${f.autogrow===false?0:1}" ${f.count?'data-count="1"':''} rows="${rows}" placeholder="${esc(f.placeholder||'')}">${esc(v)}</textarea></div>`;
+    }
     if (f.type === 'select') return `<div class="field"><label>${f.label}</label><select data-key="${f.key}">${f.options.map(o=>`<option value="${esc(o.v)}" ${o.v===v?'selected':''}>${esc(o.t)}</option>`).join('')}</select></div>`;
     if (f.type === 'color') return `<div class="field"><label>${f.label}</label>
       <div class="swatches" data-key="${f.key}">${PALETTE.map(c=>`<button class="swatch ${c===v?'on':''}" data-color="${c}" style="background:${c}"></button>`).join('')}</div>
@@ -2716,6 +2721,18 @@ const UI = (() => {
       };
     });
     modalEl.querySelectorAll('[data-close]').forEach(b => b.onclick = close);
+    /* 长文本输入框：随内容自动增高（上限 320px），并同步字数 */
+    modalEl.querySelectorAll('textarea[data-autogrow="1"]').forEach(ta => {
+      const grow = () => {
+        ta.style.height = 'auto';
+        const h = Math.min(ta.scrollHeight, 320);
+        ta.style.height = h + 'px';
+        const lb = ta.closest('.field').querySelector('.fcnt');
+        if (lb && ta.dataset.count === '1') lb.textContent = [...ta.value].length + ' 字';
+      };
+      ta.addEventListener('input', grow);
+      requestAnimationFrame(grow);
+    });
     const ok = document.getElementById('modalOk');
     if (ok) ok.onclick = () => {
       const vals = {};
@@ -3133,7 +3150,7 @@ function formNewEvent(date){
       { type:'time', key:'startTime', label:'开始时间（同日排序用）', value:'00:00' },
       { type:'text', key:'category', label:'分类', placeholder:'产品 / 工作 / 健康 / 学习…', value:'未分类' },
       { type:'color', key:'color', label:'生命线颜色', value:PALETTE[0] },
-      { type:'textarea', key:'desc', label:'事件描述（可留空）', placeholder:'这件事为什么从这一天开始？' },
+      { type:'textarea', key:'desc', label:'事件描述（可留空）', placeholder:'这件事为什么从这一天开始？', rows:6, count:true },
     ],
     ok:'创建事件',
     onSubmit(v){
@@ -3157,7 +3174,7 @@ function formEditEvent(id){
       { type:'time', key:'startTime', label:'开始时间', value:ev.startTime || '00:00' },
       { type:'date', key:'end', label:'结束日期（清空＝进行中）', value:ev.end || '' },
       { type:'color', key:'color', label:'生命线颜色', value:ev.color },
-      { type:'textarea', key:'desc', label:'事件描述', value:ev.desc || '' },
+      { type:'textarea', key:'desc', label:'事件描述', value:ev.desc || '', rows:7, count:true },
     ],
     ok:'保存修改',
     onSubmit(v){
@@ -3177,7 +3194,7 @@ function formAddProgress(id, date){
     fields:[
       { type:'date', key:'date', label:'节点日期', value:date },
       { type:'text', key:'title', label:'进展标题', placeholder:'一句话说清这一步发生了什么' },
-      { type:'textarea', key:'text', label:'补充说明（可留空）' },
+      { type:'textarea', key:'text', label:'补充说明（可留空）', rows:7, count:true },
     ],
     ok:'添加节点',
     onSubmit(v){
@@ -3195,7 +3212,7 @@ function formEditNode(id, nodeId){
     fields:[
       { type:'date', key:'date', label:'节点日期', value:n.date },
       { type:'text', key:'title', label:'进展标题', value:n.title },
-      { type:'textarea', key:'text', label:'补充说明', value:n.text || '' },
+      { type:'textarea', key:'text', label:'补充说明', value:n.text || '', rows:8, count:true },
     ],
     ok:'保存修改',
     onSubmit(v){
@@ -3222,7 +3239,7 @@ function formBranch(parentId, date){
       { type:'date', key:'start', label:'分支开始日期', value:date },
       { type:'text', key:'category', label:'分类', value:ev.category || '未分类' },
       { type:'color', key:'color', label:'生命线颜色', value:PALETTE[4] },
-      { type:'textarea', key:'text', label:'分支原因（可留空）' },
+      { type:'textarea', key:'text', label:'分支原因（可留空）', rows:6, count:true },
     ],
     ok:'创建分支',
     onSubmit(v){
@@ -3252,7 +3269,7 @@ function formResult(id){
   const ev = findLive(id); if (!ev) return;
   UI.open({
     title:'记录最终结果',
-    fields:[{ type:'textarea', key:'result', label:'结果 / 收获', value: ev.result || '', placeholder:'这件事最后留下了什么？' }],
+    fields:[{ type:'textarea', key:'result', label:'结果 / 收获', value: ev.result || '', placeholder:'这件事最后留下了什么？', rows:8, count:true }],
     ok:'保存',
     onSubmit(v){ Actions.setResult(id, v.result); UI.close(); UI.toast('结果已保存'); }
   });
