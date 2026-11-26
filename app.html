@@ -384,6 +384,8 @@ input,textarea,select{font-family:inherit;}
 .iso-chip:hover i{color:var(--ink);}
 .lhBtns .iso-btn.on{color:var(--ink);background:#EFEBE1;box-shadow:inset 0 0 0 1px #DCD6C8;}
 .save-badge.fail{color:#B4453A;border-color:#E4CEC9;background:#FCF1EF;}
+.save-badge.sync{color:#3F72A0;border-color:#CBDCEB;background:#F2F7FC;}
+.save-badge.cloud{color:#2F7D6D;border-color:#CFE1DB;background:#F1F8F5;}
 .ro-note{margin:10px 18px 0;padding:7px 10px;border:1px dashed #C9BEE0;border-radius:9px;background:#F4F1FA;color:#6F62A8;font-size:10.5px;line-height:1.6;}
 .acts.locked button{opacity:.38;cursor:not-allowed;}
 .mini-btn{border:1px solid var(--line);border-radius:8px;padding:2px 8px;font-size:10px;background:var(--bg);color:var(--ink2);}
@@ -682,6 +684,10 @@ const Persist = (() => {
   const KEY = 'timeline.v3';
   const OLD = ['timeline.v2','timeline.v1'];
   const BAK = 'timeline.backup.v3';
+  let key = KEY;                 /* 当前写入键：未登录是本机键，登录后是账号键 */
+  const setKey = k => { key = k || KEY; };
+  const getKey = () => key;
+  const userKey = uid => 'timeline.v3.u.' + uid;
   const pack = () => ({
     schema:'timeflow', version:3, app:'TimeFlow', savedAt: Date.now(),
     events: EVENTS, links: LINKS, trash: TRASH,
@@ -692,7 +698,7 @@ const Persist = (() => {
   });
   function save(){
     try{
-      localStorage.setItem(KEY, JSON.stringify(pack()));
+      localStorage.setItem(key, JSON.stringify(pack()));
       state.save = 'ok'; state.lastError = null;
       return true;
     }catch(err){
@@ -703,7 +709,7 @@ const Persist = (() => {
     }
   }
   function backup(){
-    try{ localStorage.setItem(BAK, localStorage.getItem(KEY) || ''); return true; }catch(e){ return false; }
+    try{ localStorage.setItem(BAK, localStorage.getItem(key) || ''); return true; }catch(e){ return false; }
   }
   function restoreBackup(){
     try{
@@ -713,8 +719,8 @@ const Persist = (() => {
   }
   function load(){
     let raw = null, src = null;
-    try{ raw = localStorage.getItem(KEY); if (raw) src = KEY; }catch(e){ return { ok:false }; }
-    if (!raw){
+    try{ raw = localStorage.getItem(key); if (raw) src = key; }catch(e){ return { ok:false }; }
+    if (!raw && key === KEY){
       for (const k of OLD){
         try{ const r = localStorage.getItem(k); if (r){ raw = r; src = k; break; } }catch(e){}
       }
@@ -728,7 +734,287 @@ const Persist = (() => {
     Import.apply(o, true);
     return { ok:true, from: src, migrated: src !== KEY, errors: valid.errors || [], warnings: valid.warnings || [] };
   }
-  return { KEY, BAK, save, backup, load, restoreBackup, pack };
+  return { KEY, BAK, save, backup, load, restoreBackup, pack, setKey, getKey, userKey };
+})();
+
+   /* ===================== 2.5 Cloud：账号与云端同步（Supabase） ===================== */
+const Cloud = (() => {
+  const CFG = {
+    url: 'https://cipmowcyxamisuukyjlq.supabase.co',
+    key: 'sb_publishable_X1Ln2V6FOO8g5xAt2u5DHA_F7Yf-Sda',
+  };
+  const SESS_KEY = 'tf.session';
+  const REV_PFX = 'tf.rev.';
+  let sess = null;                /* { access_token, refresh_token, expires_at, user:{id,email} } */
+  let status = 'out';             /* out | idle | sync | ok | fail */
+  let lastSync = 0, timer = null, rev = 0, busy = false, warnOnce = false;
+
+  const readSession = () => { try{ const r = localStorage.getItem(SESS_KEY); return r ? JSON.parse(r) : null; }catch(e){ return null; } };
+  const writeSession = s => { try{ s ? localStorage.setItem(SESS_KEY, JSON.stringify(s)) : localStorage.removeItem(SESS_KEY); }catch(e){} };
+  const userKey = uid => Persist.userKey(uid);
+  const readRev = () => { try{ return sess ? (Number(localStorage.getItem(REV_PFX + sess.user.id)) || 0) : 0; }catch(e){ return 0; } };
+  const writeRev = n => { if (sess){ try{ localStorage.setItem(REV_PFX + sess.user.id, String(n)); }catch(e){} } };
+  function timeStr(ts){
+    if (!ts) return '尚未同步';
+    const d = new Date(ts);
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  async function api(path, opt = {}, needAuth = true){
+    const headers = { apikey: CFG.key, 'Content-Type': 'application/json' };
+    if (needAuth && sess) headers.Authorization = 'Bearer ' + sess.access_token;
+    const res = await fetch(CFG.url + path, {
+      method: opt.method || 'GET',
+      headers: Object.assign(headers, opt.headers || {}),
+      body: opt.body === undefined ? undefined : JSON.stringify(opt.body),
+    });
+    const text = await res.text();
+    if (!res.ok){
+      let msg = text;
+      try{ const j = JSON.parse(text); msg = j.msg || j.message || j.error_description || j.error || text; }catch(e){}
+      const err = new Error(String(msg).slice(0, 180) || ('HTTP ' + res.status));
+      err.status = res.status;
+      throw err;
+    }
+    return text ? JSON.parse(text) : null;
+  }
+
+  function adopt(s){
+    sess = {
+      access_token: s.access_token,
+      refresh_token: s.refresh_token,
+      expires_at: s.expires_at || Math.floor(Date.now()/1000 + (s.expires_in || 3600)),
+      user: { id: s.user.id, email: s.user.email },
+    };
+    writeSession(sess);
+    Persist.setKey(userKey(sess.user.id));
+    rev = readRev();
+    status = 'idle';
+  }
+
+  async function ensureToken(){
+    if (!sess) throw new Error('尚未登录');
+    if (sess.expires_at - 90 > Date.now() / 1000) return true;
+    const r = await api('/auth/v1/token?grant_type=refresh_token', { method:'POST', body:{ refresh_token: sess.refresh_token } }, false);
+    adopt(r);
+    return true;
+  }
+
+  function fail(err){
+    status = 'fail';
+    state.cloudError = err && err.message;
+    try{ console.warn('[Cloud]', err); }catch(e){}
+    Render.saveBadge();
+    if (!warnOnce){ warnOnce = true; UI.toast('云端同步暂时失败，数据已保存在本机：' + (err && err.message ? err.message : '')); setTimeout(() => { warnOnce = false; }, 5000); }
+  }
+
+  /* ---- 登录 / 注册 ---- */
+  async function login(email, pwd){
+    const r = await api('/auth/v1/token?grant_type=password', { method:'POST', body:{ email, password: pwd } }, false);
+    await enterAccount(r);
+    return true;
+  }
+  async function signup(email, pwd){
+    const r = await api('/auth/v1/signup', { method:'POST', body:{ email, password: pwd } }, false);
+    if (!r || !r.access_token){ UI.toast('注册成功，请先去邮箱点确认链接，再回来登录'); return true; }
+    await enterAccount(r);
+    return true;
+  }
+  async function enterAccount(r){
+    const prev = Persist.pack();                 /* 登录前的本机数据 */
+    adopt(r);
+    const uk = userKey(sess.user.id);
+    let cached = null;
+    try{ cached = localStorage.getItem(uk); }catch(e){}
+    if (cached){
+      try{ const o = JSON.parse(cached); Import.apply(o, true); }catch(e){}
+    } else {
+      try{ localStorage.setItem(uk, JSON.stringify(prev)); }catch(e){}
+    }
+    Render.all();
+    await syncAfterLogin();
+  }
+
+  /* ---- 同步 ---- */
+  async function syncAfterLogin(){
+    status = 'sync'; Render.saveBadge();
+    try{
+      await ensureToken();
+      const rows = await api('/rest/v1/docs?select=rev,updated_at,data&user_id=eq.' + sess.user.id);
+      const row = rows && rows[0];
+      if (!row){ await push(true); UI.toast('已登录 · 本机数据已上传到账号'); return; }
+      const localRev = readRev();
+      if (row.rev > localRev && EVENTS.length && localRev > 0){ askConflict(row); return; }
+      if (row.rev > localRev){ applyRemote(row); return; }
+      if (localRev > row.rev){ await push(); return; }
+      status = 'ok'; lastSync = Date.now(); Render.saveBadge();
+    }catch(err){ fail(err); }
+  }
+
+  function applyRemote(row){
+    try{ Import.apply(row.data, true); }catch(err){ fail(err); return; }
+    rev = Number(row.rev) || 0;
+    writeRev(rev);
+    status = 'ok'; lastSync = Date.now();
+    Render.all(); scrollToDate(TODAY, false);
+    UI.toast('已同步云端数据 · ' + EVENTS.length + ' 个事件');
+  }
+
+  function askConflict(row){
+    const remoteN = (row.data && row.data.events) ? row.data.events.length : 0;
+    UI.open({ title:'本机与云端都有数据', okOnly:true, wide:true,
+      desc:`这个账号的云端有 ${remoteN} 个事件，本机也有一份自己的记录。请选择保留哪一份。`,
+      html:`<div class="dlist">
+        <div class="drow"><i style="background:#2F7D6D"></i><span>用云端覆盖本机</span><em>推荐：以账号里的记录为准</em></div>
+        <div class="drow"><i style="background:#D95F43"></i><span>把本机上传到云端</span><em>会用本机记录替换云端内容</em></div>
+      </div>
+      <p class="modal-desc">两种操作都会先在云端留一份历史快照，选错了还能找回来。</p>
+      <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
+        <button class="btn solid" id="clPull">用云端覆盖本机</button>
+        <button class="btn ghost" id="clPush">上传本机到云端</button>
+      </div>` });
+    const pull = document.getElementById('clPull');
+    const pushLocal = document.getElementById('clPush');
+    if (pull) pull.onclick = () => { UI.close(); applyRemote(row); };
+    if (pushLocal) pushLocal.onclick = () => { UI.close(); push(true).then(() => UI.toast('本机数据已覆盖云端')); };
+  }
+
+  async function push(force){
+    if (!sess || busy) return;
+    busy = true;
+    try{
+      await ensureToken();
+      const data = Persist.pack();
+      rev = Math.max(rev + 1, readRev() + 1);
+      await api('/rest/v1/docs?on_conflict=user_id', { method:'POST',
+        headers:{ Prefer:'resolution=merge-duplicates,return=minimal' },
+        body:[{ user_id: sess.user.id, data, rev, updated_at: new Date().toISOString() }] });
+      writeRev(rev);
+      status = 'ok'; lastSync = Date.now();
+      if (rev % 5 === 1){
+        api('/rest/v1/revisions', { method:'POST', headers:{ Prefer:'return=minimal' },
+          body:[{ user_id: sess.user.id, rev, data }] }).catch(() => {});
+      }
+    }catch(err){ fail(err); }
+    finally{ busy = false; Render.saveBadge(); }
+  }
+
+  function onSave(){
+    if (!sess) return;
+    status = 'sync'; Render.saveBadge();
+    clearTimeout(timer);
+    timer = setTimeout(() => push(), 800);
+  }
+
+  /* ---- 启动 ---- */
+  function boot(){
+    const s = readSession();
+    if (s && s.user && s.access_token){
+      sess = s;
+      Persist.setKey(userKey(s.user.id));
+      rev = readRev();
+      status = s.expires_at - 90 > Date.now()/1000 ? 'idle' : 'sync';
+    } else {
+      sess = null;
+      Persist.setKey(Persist.KEY);
+      status = 'out';
+    }
+  }
+  function afterLoad(){
+    if (!sess) return;
+    syncAfterLogin();
+  }
+
+  function signOut(){
+    if (!sess) return;
+    UI.confirmBox('退出账号', '退出后这台设备会回到未登录状态，本机缓存仍保留，云端数据不受影响。', '退出登录', () => {
+      Persist.save();                       /* 先落盘到账号键 */
+      sess = null; status = 'out'; lastSync = 0;
+      writeSession(null);
+      Persist.setKey(Persist.KEY);
+      const r = Persist.load();
+      if (!r.ok) Import.apply({ schema:'timeflow', version:3, events: clone(SAMPLE.events), links: clone(SAMPLE.links) }, true);
+      Render.all(); UI.toast('已退出账号');
+    });
+  }
+
+  /* ---- 面板与弹窗 ---- */
+  const signedIn = () => !!sess;
+  const email = () => (sess ? sess.user.email : '');
+  function statusText(){
+    if (!sess) return '未登录 · 只在本机保存';
+    if (status === 'sync') return '同步中…';
+    if (status === 'fail') return '同步失败 · 本机已保存';
+    if (status === 'ok') return '已同步 · ' + timeStr(lastSync);
+    return '已登录 · 待同步';
+  }
+
+  function openAccount(){
+    if (!sess){
+      UI.open({ title:'登录 · 多设备同步', okOnly:true, cancel:'关闭',
+        desc:'用同一个账号在电脑、手机、平板上打开，看到的是同一份时间线。登录后本机记录会作为缓存保留。',
+        html:`<div class="field"><label>邮箱</label><input type="text" id="accEmail" placeholder="you@example.com" autocomplete="username"></div>
+          <div class="field"><label>密码</label><input type="password" id="accPass" placeholder="至少 6 位" autocomplete="current-password"></div>
+          <p class="modal-desc" id="accMsg">第一次使用请点「注册」，已有账号点「登录」。</p>
+          <div style="display:flex;gap:8px;margin-top:12px">
+            <button class="btn solid" id="accLogin">登录</button>
+            <button class="btn ghost" id="accSignup">注册</button>
+          </div>` });
+      const em = document.getElementById('accEmail'), pw = document.getElementById('accPass'), msg = document.getElementById('accMsg');
+      const run = async kind => {
+        const e = (em.value || '').trim(), p = pw.value || '';
+        if (!e || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)){ msg.textContent = '请填一个可用的邮箱地址'; return; }
+        if (p.length < 6){ msg.textContent = '密码至少 6 位'; return; }
+        msg.textContent = kind === 'login' ? '正在登录…' : '正在注册…';
+        try{
+          await (kind === 'login' ? login(e, p) : signup(e, p));
+          UI.close();
+          UI.toast('已登录：' + e);
+        }catch(err){
+          msg.textContent = (kind === 'login' ? '登录失败：' : '注册失败：') + (err.message || '请稍后重试');
+        }
+      };
+      document.getElementById('accLogin').onclick = () => run('login');
+      document.getElementById('accSignup').onclick = () => run('signup');
+      setTimeout(() => em.focus(), 60);
+      return;
+    }
+    UI.open({ title:'账号与同步', okOnly:true, cancel:'关闭',
+      html:`<div class="dlist">
+        <div class="drow"><i style="background:#2F7D6D"></i><span>当前账号</span><em>${esc(email())}</em></div>
+        <div class="drow"><i style="background:#3F72A0"></i><span>同步状态</span><em>${esc(statusText())}</em></div>
+        <div class="drow"><i style="background:#BE8A2B"></i><span>本机规模</span><em>${EVENTS.length} 事件</em></div>
+      </div>
+      <p class="modal-desc">改动会先写本机，再自动推到云端；其他设备下次打开或点「立即同步」即可取回。</p>
+      <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
+        <button class="btn solid" id="accSync">立即同步</button>
+        <button class="btn ghost" id="accSignout">退出账号</button>
+      </div>` });
+    document.getElementById('accSync').onclick = () => { UI.close(); syncNow(); };
+    document.getElementById('accSignout').onclick = () => { UI.close(); signOut(); };
+  }
+
+  async function syncNow(){
+    if (!sess) return;
+    UI.toast('正在同步…');
+    try{
+      await ensureToken();
+      const rows = await api('/rest/v1/docs?select=rev,updated_at,data&user_id=eq.' + sess.user.id);
+      const row = rows && rows[0];
+      const localRev = readRev();
+      if (!row){ await push(true); UI.toast('已上传到云端'); return; }
+      if (row.rev > localRev){ applyRemote(row); return; }
+      await push(true);
+      UI.toast('已同步到云端');
+    }catch(err){ fail(err); }
+  }
+
+  /* 本地保存时自动排队推送（包装 Persist.save，保持原语义） */
+  const rawSave = Persist.save;
+  Persist.save = function(){ const r = rawSave.apply(Persist, arguments); onSave(); return r; };
+
+  return { boot, afterLoad, login, signup, signOut, syncNow, openAccount, statusText, signedIn, email,
+    get status(){ return status; }, get lastSync(){ return lastSync; }, get rev(){ return rev; }, CFG };
 })();
 
 const Log = (() => {
@@ -1707,9 +1993,23 @@ const Render = (() => {
   function saveBadge(){
     const el = document.getElementById('saveBadge');
     if (!el) return;
+    if (state.save === 'fail'){
+      el.className = 'save-badge fail';
+      el.textContent = '保存失败';
+      el.title = state.lastError ? state.lastError.msg : '';
+      return;
+    }
+    if (Cloud.signedIn()){
+      const cs = Cloud.status;
+      if (cs === 'sync'){ el.className = 'save-badge sync'; el.textContent = '同步中…'; el.title = '正在推送到账号云端'; }
+      else if (cs === 'fail'){ el.className = 'save-badge fail'; el.textContent = '同步失败 · 本地已存'; el.title = state.cloudError || '云端暂时连不上，稍后自动重试'; }
+      else if (cs === 'ok'){ el.className = 'save-badge cloud'; el.textContent = '已同步 · 云端'; el.title = '数据已推送到账号，其他设备可拉取'; }
+      else { el.className = 'save-badge'; el.textContent = '已登录 · 待同步'; el.title = '等待首次同步完成'; }
+      return;
+    }
     el.className = 'save-badge ' + state.save;
     el.textContent = state.save === 'ok' ? '已保存 · 本地' : '保存失败';
-    el.title = state.save === 'ok' ? '数据已写入本机 localStorage（键 timeline.v3）' : (state.lastError ? state.lastError.msg : '');
+    el.title = state.save === 'ok' ? '数据已写入本机 localStorage（键 ' + Persist.getKey() + '）' : (state.lastError ? state.lastError.msg : '');
   }
 
   /* ---- 设置面板 ---- */
@@ -1719,6 +2019,18 @@ const Render = (() => {
     const cats = ['all'].concat(Array.from(new Set(VIEW_EVENTS.map(e => e.category || '未分类'))));
     const ro = isReadOnly();
     panelEl.innerHTML = `
+      <div class="pgroup">
+        <h5>账号与同步</h5>
+        ${Cloud.signedIn() ? `
+        <div class="prow"><span>账号</span><span style="font-size:10.5px;max-width:190px;text-align:right;overflow:hidden;text-overflow:ellipsis">${esc(Cloud.email())}</span></div>
+        <div class="prow"><span>云端</span><span style="font-size:10.5px">${esc(Cloud.statusText())}</span></div>` : `
+        <div class="prow"><span>状态</span><span style="font-size:10.5px">${esc(Cloud.statusText())}</span></div>
+        <div class="prow"><span>提示</span><span style="font-size:10.5px;color:var(--muted)">登录后同一账号多设备共用</span></div>`}
+        <div class="pmenu">
+          <button data-menu="account">${Cloud.signedIn() ? '账号与同步设置' : '登录 / 注册（多设备同步）'}</button>
+          ${Cloud.signedIn() ? '<button data-menu="sync-now">立即同步</button>' : ''}
+        </div>
+      </div>
       <div class="pgroup">
         <h5>显示</h5>
         <div class="prow"><span>轨道宽度</span><div class="stepper">
@@ -3071,6 +3383,8 @@ function showErrors(){
 const fileInput = document.getElementById('fileInput');
 
 function doMenu(k){
+  if (k === 'account'){ togglePanel(false); Cloud.openAccount(); return; }
+  if (k === 'sync-now'){ Cloud.syncNow(); return; }
   if (k === 'export') return exportData();
   if (k === 'import'){ togglePanel(false); fileInput.click(); return; }
   if (k === 'undo'){ Hist.undo(); return; }
@@ -3136,6 +3450,7 @@ fileInput.addEventListener('change', e => {
 
 /* ===================== 16. 启动 ===================== */
 (function init(){
+  Cloud.boot();
   const loaded = Persist.load();
   if (!loaded.ok || !EVENTS.length){
     Import.apply({ schema:'timeflow', version:3, events: clone(SAMPLE.events), links: clone(SAMPLE.links) }, true);
@@ -3146,6 +3461,7 @@ fileInput.addEventListener('change', e => {
   Render.all();
   requestAnimationFrame(() => {
     scrollInitial();
+    Cloud.afterLoad();
     if (loaded.migrated) setTimeout(() => UI.toast('已从旧版数据迁移（v' + (loaded.from === 'timeline.v1' ? 1 : 2) + ' → v3），历史数据保留'), 700);
     else if (loaded.errors && loaded.errors.length) setTimeout(() => UI.toast('载入时有 ' + loaded.errors.length + ' 条校验告警，已尽量保留数据'), 700);
   });
@@ -3167,7 +3483,7 @@ function refillMeta(){
 
 /* ===================== 17. 测试接口（自动化测试用） ===================== */
 window.TF = {
-  U, Domain, Import, Journal, Engine, Render, Actions, Persist, Log, Hist, UI, RelPop,
+  U, Domain, Import, Journal, Engine, Render, Actions, Persist, Log, Hist, UI, RelPop, Cloud,
   state, VIEWS, REL,
   get events(){ return EVENTS; }, get links(){ return LINKS; }, get trash(){ return TRASH; },
   get journal(){ return JOURNAL; }, get viewEvents(){ return VIEW_EVENTS; }, get viewLinks(){ return VIEW_LINKS; },
