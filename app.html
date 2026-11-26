@@ -857,7 +857,7 @@ const Cloud = (() => {
     === JSON.stringify((b || []).map(e => [e.id, e.title, e.start, e.end]));
 
   /* 云端为准：采纳云端；缓存里若有不同内容，先存成云端快照（历史版本可回滚），随后静默替换 */
-  async function adoptCloud(row, localRev){
+  async function adoptCloud(row, localRev, silent){
     const local = Persist.pack();
     if (local.events.length && !sameEvents(local.events, row.data && row.data.events)){
       try{
@@ -865,16 +865,16 @@ const Cloud = (() => {
           body:[{ user_id: sess.user.id, rev: localRev || 1, data: local }] });
       }catch(e){}
     }
-    applyRemote(row);
+    applyRemote(row, silent);
   }
 
-  function applyRemote(row){
+  function applyRemote(row, silent){
     try{ Import.apply(row.data, true); }catch(err){ fail(err); return; }
     rev = Number(row.rev) || 0;
     writeRev(rev);
     status = 'ok'; lastSync = Date.now();
     Render.all(); scrollToDate(TODAY, false);
-    UI.toast('已同步云端数据 · ' + EVENTS.length + ' 个事件');
+    if (!silent) UI.toast('已同步云端数据 · ' + EVENTS.length + ' 个事件');
   }
 
   async function push(force){
@@ -997,7 +997,7 @@ const Cloud = (() => {
   function statusText(){
     if (!sess) return '未登录';
     if (status === 'sync') return '同步中…';
-    if (status === 'fail') return '同步失败 · 稍后重试';
+    if (status === 'fail') return '同步失败 · 可重试';
     if (status === 'ok') return '已同步 · ' + timeStr(lastSync);
     return '已登录 · 待同步';
   }
@@ -1038,13 +1038,14 @@ const Cloud = (() => {
         <div class="drow"><i style="background:#3F72A0"></i><span>同步状态</span><em>${esc(statusText())}</em></div>
         <div class="drow"><i style="background:#BE8A2B"></i><span>当前数据</span><em>${EVENTS.length} 事件 · 云端</em></div>
       </div>
-      <p class="modal-desc">所有改动直接写入你的账号云端；其他设备打开或点「立即同步」即可取回。</p>
+      <p class="modal-desc">所有改动直接写入你的账号云端；换设备登录、或从别的设备切回这个页面时，会自动取回最新的一份。${status === 'fail' ? '现在同步失败，点下面的按钮重试。' : ''}</p>
       <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
-        <button class="btn solid" id="accSync">立即同步</button>
+        ${status === 'fail' ? '<button class="btn solid" id="accSync">重试同步</button>' : ''}
         <button class="btn ghost" id="accHistory">历史版本</button>
         <button class="btn ghost" id="accSignout">退出账号</button>
       </div>` });
-    document.getElementById('accSync').onclick = () => { UI.close(); syncNow(); };
+    const btnSync = document.getElementById('accSync');
+    if (btnSync) btnSync.onclick = () => { UI.close(); syncNow(); };
     document.getElementById('accHistory').onclick = () => { UI.close(); openHistory(); };
     document.getElementById('accSignout').onclick = () => { UI.close(); signOut(); };
   }
@@ -1062,6 +1063,21 @@ const Cloud = (() => {
       await push(true);
       UI.toast('已同步到云端');
     }catch(err){ fail(err); }
+  }
+
+  /* 切回页面或窗口重新聚焦时，静默拉取一次；只有云端更新才替换，避免把本机改动推上去 */
+  let lastPull = 0;
+  async function pullIfNewer(){
+    if (!sess || busy || state.gate) return;
+    const t = Date.now();
+    if (t - lastPull < 15000) return;
+    lastPull = t;
+    try{
+      await ensureToken();
+      const rows = await api('/rest/v1/docs?select=rev,updated_at,data&user_id=eq.' + sess.user.id);
+      const row = rows && rows[0];
+      if (row && row.rev > readRev()) await adoptCloud(row, readRev(), true);
+    }catch(e){}
   }
 
   /* ---- 登录门禁：未登录不得进入工作台 ---- */
@@ -1111,6 +1127,11 @@ const Cloud = (() => {
   /* 本地保存时自动排队推送（包装 Persist.save，保持原语义） */
   const rawSave = Persist.save;
   Persist.save = function(){ const r = rawSave.apply(Persist, arguments); onSave(); return r; };
+
+  try{
+    window.addEventListener('focus', pullIfNewer);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) pullIfNewer(); });
+  }catch(e){}
 
   return { boot, afterLoad, login, signup, signOut, syncNow, openAccount, openHistory,
     statusText, signedIn, email,
@@ -2250,7 +2271,6 @@ const Render = (() => {
         <div class="prow"><span>提示</span><span style="font-size:10.5px;color:var(--muted)">登录后同一账号多设备共用</span></div>`}
         <div class="pmenu">
           <button data-menu="account">${Cloud.signedIn() ? '账号与同步设置' : '登录 / 注册（多设备同步）'}</button>
-          ${Cloud.signedIn() ? '<button data-menu="sync-now">立即同步</button>' : ''}
         </div>
       </div>
       <div class="pgroup">
@@ -3622,7 +3642,6 @@ const fileInput = document.getElementById('fileInput');
 
 function doMenu(k){
   if (k === 'account'){ togglePanel(false); Cloud.openAccount(); return; }
-  if (k === 'sync-now'){ Cloud.syncNow(); return; }
   if (k === 'export') return exportData();
   if (k === 'export-md') return exportMarkdown();
   if (k === 'import'){ togglePanel(false); fileInput.click(); return; }
