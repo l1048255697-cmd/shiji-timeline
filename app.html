@@ -3352,15 +3352,18 @@ function showTrash(){
 function showKeys(){
   UI.open({ title:'快捷键', okOnly:true, html:`
     <div class="keys">
-      <div><b>Ctrl + 滚轮</b><span>缩放时间密度（日/周/月/年/长期）</span></div>
-      <div><b>Ctrl + Z</b><span>撤销</span></div>
+      <div><b>Ctrl + 滚轮</b><span>缩放时间密度（日 / 周 / 月 / 年 / 长期）</span></div>
+      <div><b>1 – 5</b><span>切换视图：日 / 周 / 月 / 年 / 长期</span></div>
+      <div><b>Ctrl + Z</b><span>撤销（最多 30 步）</span></div>
       <div><b>Ctrl + Shift + Z</b><span>重做</span></div>
-      <div><b>N</b><span>在光标处新建事件</span></div>
-      <div><b>T</b><span>回到今天</span></div>
-      <div><b>1–6</b><span>切换视图</span></div>
-      <div><b>Esc</b><span>关闭弹层 / 抽屉 / 面板</span></div>
-      <div><b>拖圆点</b><span>改进展节点日期（自动校验）</span></div>
-      <div><b>点生命线</b><span>在对应日期添加进展</span></div>
+      <div><b>N</b><span>在当前日期新建事件</span></div>
+      <div><b>T</b><span>回到今天（同时清除「定位」高亮）</span></div>
+      <div><b>← / →</b><span>历史回放：前一天 / 后一天（范围最早可见日 → 昨天）</span></div>
+      <div><b>Esc</b><span>关闭弹层 / 抽屉 / 面板；回放中退出回放</span></div>
+      <div><b>点日期栏</b><span>在该日新建事件；悬停可整行高亮</span></div>
+      <div><b>点生命线</b><span>在对应日期添加进展节点</span></div>
+      <div><b>拖圆点</b><span>改进展节点日期（越界会拦截提示）</span></div>
+      <div><b>点圆点 / 标签</b><span>打开节点详情；点事件卡片打开事件详情</span></div>
     </div>` });
 }
 
