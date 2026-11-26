@@ -707,11 +707,11 @@ const SAMPLE = (() => ({
 }))();
 
 const Persist = (() => {
-  const KEY = 'timeline.v3';
-  const OLD = ['timeline.v2','timeline.v1'];
-  let key = KEY;                 /* 当前写入键：未登录是本机键，登录后是账号键 */
+  const KEY = 'timeline.v3';          /* 仅作为「未登录」占位键，不写入任何数据 */
+  let key = KEY;                      /* 登录后才切换到账号缓存键：timeline.v3.u.<uid> */
   const setKey = k => { key = k || KEY; };
   const getKey = () => key;
+  const active = () => key !== KEY;   /* 只有账号缓存键才允许落盘 */
   const userKey = uid => 'timeline.v3.u.' + uid;
   const pack = () => ({
     schema:'timeflow', version:3, app:'TimeFlow', savedAt: Date.now(),
@@ -722,36 +722,31 @@ const Persist = (() => {
       status:state.status, cat:state.cat, hideEnded:state.hideEnded },
   });
   function save(){
+    if (!active()) return true;        /* 未登录：不产生任何本机数据 */
     try{
       localStorage.setItem(key, JSON.stringify(pack()));
       state.save = 'ok'; state.lastError = null;
       return true;
     }catch(err){
       state.save = 'fail'; state.lastError = err.message;
-      Log.err('保存失败', err);
-      UI.toast('保存失败：' + (err.name === 'QuotaExceededError' ? '本地存储空间不足，请导出备份' : err.message));
+      Log.err('缓存写入失败', err);
+      UI.toast('缓存写入失败：' + (err.name === 'QuotaExceededError' ? '存储空间不足，请导出备份' : err.message));
       return false;
     }
   }
   function load(){
-    let raw = null, src = null;
-    try{ raw = localStorage.getItem(key); if (raw) src = key; }catch(e){ return { ok:false }; }
-    if (!raw && key === KEY){
-      for (const k of OLD){
-        try{ const r = localStorage.getItem(k); if (r){ raw = r; src = k; break; } }catch(e){}
-      }
-    }
-    if (!raw) return { ok:false };
+    if (!active()) return { ok:false, migrated:false };   /* 未登录不读任何本机旧数据 */
+    let raw = null;
+    try{ raw = localStorage.getItem(key); }catch(e){ return { ok:false, migrated:false }; }
+    if (!raw) return { ok:false, migrated:false };
     let o;
-    try{ o = JSON.parse(raw); }catch(e){ Log.err('本地数据损坏', e); return { ok:false, corrupt:true }; }
+    try{ o = JSON.parse(raw); }catch(e){ Log.err('账号缓存损坏', e); return { ok:false, corrupt:true, migrated:false }; }
     const valid = Import.validate(o, { silent:true });
-    if (!valid.ok){ Log.err('本地数据校验失败', { errors: valid.errors }); }
-    /* 即使有告警也尽量载入（尽最大可能保住用户数据） */
+    if (!valid.ok){ Log.err('账号缓存校验失败', { errors: valid.errors }); }
     Import.apply(o, true);
-    /* 只有从旧版键（v1/v2）读到的数据才算迁移；账号键不算 */
-    return { ok:true, from: src, migrated: OLD.includes(src), errors: valid.errors || [], warnings: valid.warnings || [] };
+    return { ok:true, from: key, migrated:false, errors: valid.errors || [], warnings: valid.warnings || [] };
   }
-  return { KEY, save, load, pack, setKey, getKey, userKey };
+  return { KEY, save, load, pack, setKey, getKey, userKey, active };
 })();
 
    /* ===================== 2.5 Cloud：账号与云端同步（Supabase） ===================== */
@@ -822,7 +817,7 @@ const Cloud = (() => {
     state.cloudError = err && err.message;
     try{ console.warn('[Cloud]', err); }catch(e){}
     Render.saveBadge();
-    if (!warnOnce){ warnOnce = true; UI.toast('云端同步暂时失败，数据已保存在本机：' + (err && err.message ? err.message : '')); setTimeout(() => { warnOnce = false; }, 5000); }
+    if (!warnOnce){ warnOnce = true; UI.toast('云端同步暂时失败，稍后自动重试：' + (err && err.message ? err.message : '')); setTimeout(() => { warnOnce = false; }, 5000); }
   }
 
   /* ---- 登录 / 注册 ---- */
@@ -838,16 +833,7 @@ const Cloud = (() => {
     return true;
   }
   async function enterAccount(r){
-    const prev = Persist.pack();                 /* 登录前的本机数据 */
     adopt(r);
-    const uk = userKey(sess.user.id);
-    let cached = null;
-    try{ cached = localStorage.getItem(uk); }catch(e){}
-    if (cached){
-      try{ const o = JSON.parse(cached); Import.apply(o, true); }catch(e){}
-    } else {
-      try{ localStorage.setItem(uk, JSON.stringify(prev)); }catch(e){}
-    }
     hideGate();
     Render.all();
     await syncAfterLogin();
@@ -860,7 +846,7 @@ const Cloud = (() => {
       await ensureToken();
       const rows = await api('/rest/v1/docs?select=rev,updated_at,data&user_id=eq.' + sess.user.id);
       const row = rows && rows[0];
-      if (!row){ await push(true); UI.toast('已登录 · 本机数据已上传到账号'); return; }
+      if (!row){ await push(true); UI.toast('账号还没有云端记录，已新建一份'); return; }
       const localRev = readRev();
       if (row.rev >= localRev){ await adoptCloud(row, localRev); return; }
       await push();
@@ -870,29 +856,25 @@ const Cloud = (() => {
   const sameEvents = (a, b) => JSON.stringify((a || []).map(e => [e.id, e.title, e.start, e.end]))
     === JSON.stringify((b || []).map(e => [e.id, e.title, e.start, e.end]));
 
-  /* 云端版本不旧于本机：采纳云端；若本机内容不同，先把本机存成一条云端快照 */
+  /* 云端为准：采纳云端；缓存里若有不同内容，先存成云端快照（历史版本可回滚），随后静默替换 */
   async function adoptCloud(row, localRev){
     const local = Persist.pack();
-    let snapshotted = false;
     if (local.events.length && !sameEvents(local.events, row.data && row.data.events)){
       try{
         await api('/rest/v1/revisions', { method:'POST', headers:{ Prefer:'return=minimal' },
           body:[{ user_id: sess.user.id, rev: localRev || 1, data: local }] });
-        snapshotted = true;
       }catch(e){}
     }
-    applyRemote(row, snapshotted, local.events.length);
+    applyRemote(row);
   }
 
-  function applyRemote(row, snapshotted, localN){
+  function applyRemote(row){
     try{ Import.apply(row.data, true); }catch(err){ fail(err); return; }
     rev = Number(row.rev) || 0;
     writeRev(rev);
     status = 'ok'; lastSync = Date.now();
     Render.all(); scrollToDate(TODAY, false);
-    const n = EVENTS.length;
-    if (snapshotted) UI.toast(`已采用云端记录 · ${n} 个事件；本机原有 ${localN} 条已存入「云端历史版本」，可随时回滚`);
-    else UI.toast('已同步云端数据 · ' + n + ' 个事件');
+    UI.toast('已同步云端数据 · ' + EVENTS.length + ' 个事件');
   }
 
   async function push(force){
@@ -996,13 +978,14 @@ const Cloud = (() => {
 
   function signOut(){
     if (!sess) return;
-    UI.confirmBox('退出账号', '退出后这台设备会回到未登录状态，本机缓存仍保留，云端数据不受影响。', '退出登录', () => {
-      Persist.save();                       /* 先落盘到账号键 */
+    UI.confirmBox('退出账号', '退出后回到登录界面，这台设备不再保留任何数据副本；云端数据不受影响。', '退出登录', () => {
+      Persist.save();                       /* 最后一次推送到账号缓存 */
+      const uk = userKey(sess.user.id);
       sess = null; status = 'out'; lastSync = 0;
       writeSession(null);
+      try{ localStorage.removeItem(uk); localStorage.removeItem(REV_PFX + uk.split('.').pop()); }catch(e){}
       Persist.setKey(Persist.KEY);
-      const r = Persist.load();
-      if (!r.ok) Import.apply({ schema:'timeflow', version:3, events:[], links:[] }, true);
+      Import.apply({ schema:'timeflow', version:3, events:[], links:[] }, true);
       Render.all(); UI.toast('已退出账号');
       showGate();
     });
@@ -1012,9 +995,9 @@ const Cloud = (() => {
   const signedIn = () => !!sess;
   const email = () => (sess ? sess.user.email : '');
   function statusText(){
-    if (!sess) return '未登录 · 只在本机保存';
+    if (!sess) return '未登录';
     if (status === 'sync') return '同步中…';
-    if (status === 'fail') return '同步失败 · 本机已保存';
+    if (status === 'fail') return '同步失败 · 稍后重试';
     if (status === 'ok') return '已同步 · ' + timeStr(lastSync);
     return '已登录 · 待同步';
   }
@@ -1022,7 +1005,7 @@ const Cloud = (() => {
   function openAccount(){
     if (!sess){
       UI.open({ title:'登录 · 多设备同步', okOnly:true, cancel:'关闭',
-        desc:'用同一个账号在电脑、手机、平板上打开，看到的是同一份时间线。登录后本机记录会作为缓存保留。',
+        desc:'用同一个账号在电脑、手机、平板上打开，看到的是同一份云端时间线。',
         html:`<div class="field"><label>邮箱</label><input type="text" id="accEmail" placeholder="you@example.com" autocomplete="username"></div>
           <div class="field"><label>密码</label><input type="password" id="accPass" placeholder="至少 6 位" autocomplete="current-password"></div>
           <p class="modal-desc" id="accMsg">第一次使用请点「注册」，已有账号点「登录」。</p>
@@ -1053,9 +1036,9 @@ const Cloud = (() => {
       html:`<div class="dlist">
         <div class="drow"><i style="background:#2F7D6D"></i><span>当前账号</span><em>${esc(email())}</em></div>
         <div class="drow"><i style="background:#3F72A0"></i><span>同步状态</span><em>${esc(statusText())}</em></div>
-        <div class="drow"><i style="background:#BE8A2B"></i><span>本机规模</span><em>${EVENTS.length} 事件</em></div>
+        <div class="drow"><i style="background:#BE8A2B"></i><span>当前数据</span><em>${EVENTS.length} 事件 · 云端</em></div>
       </div>
-      <p class="modal-desc">改动会先写本机，再自动推到云端；其他设备下次打开或点「立即同步」即可取回。</p>
+      <p class="modal-desc">所有改动直接写入你的账号云端；其他设备打开或点「立即同步」即可取回。</p>
       <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
         <button class="btn solid" id="accSync">立即同步</button>
         <button class="btn ghost" id="accHistory">历史版本</button>
@@ -1097,7 +1080,7 @@ const Cloud = (() => {
       <div class="field"><label>密码</label><input type="password" id="gatePass" placeholder="至少 6 位" autocomplete="current-password"></div>
       <div class="gate-msg" id="gateMsg"></div>
       <div class="gate-btns"><button class="btn solid" id="gateLogin">登录</button><button class="btn ghost" id="gateSignup">注册新账号</button></div>
-      <p class="gate-foot">记录会同步到你的账号，换设备登录仍在<br>本机原有记录可在登录后选择上传</p>
+      <p class="gate-foot">数据保存在你的账号云端<br>换设备登录看到同一份时间线</p>
     </div>`;
     g.classList.add('on');
     state.gate = true;
@@ -2241,14 +2224,14 @@ const Render = (() => {
     if (Cloud.signedIn()){
       const cs = Cloud.status;
       if (cs === 'sync'){ el.className = 'save-badge sync'; el.textContent = '同步中…'; el.title = '正在推送到账号云端'; }
-      else if (cs === 'fail'){ el.className = 'save-badge fail'; el.textContent = '同步失败 · 本地已存'; el.title = state.cloudError || '云端暂时连不上，稍后自动重试'; }
+      else if (cs === 'fail'){ el.className = 'save-badge fail'; el.textContent = '同步失败 · 重试中'; el.title = state.cloudError || '云端暂时连不上，稍后自动重试'; }
       else if (cs === 'ok'){ el.className = 'save-badge cloud'; el.textContent = '已同步 · 云端'; el.title = '数据已推送到账号，其他设备可拉取'; }
       else { el.className = 'save-badge'; el.textContent = '已登录 · 待同步'; el.title = '等待首次同步完成'; }
       return;
     }
-    el.className = 'save-badge ' + state.save;
-    el.textContent = state.save === 'ok' ? '已保存 · 本地' : '保存失败';
-    el.title = state.save === 'ok' ? '数据已写入本机 localStorage（键 ' + Persist.getKey() + '）' : (state.lastError ? state.lastError.msg : '');
+    el.className = 'save-badge';
+    el.textContent = '未登录';
+    el.title = '登录后数据保存在账号云端';
   }
 
   /* ---- 设置面板 ---- */
@@ -2321,7 +2304,7 @@ const Render = (() => {
           <button data-menu="import">导入（合并或替换）</button>
           ${Cloud.signedIn() ? '<button data-menu="history">云端历史版本</button>' : ''}
         </div>
-        <div class="prow" style="margin-top:8px"><span>存储</span><span style="font-size:10.5px">${state.save==='ok'?'已保存':'<b style="color:#B4453A">保存失败</b>'}</span></div>
+        <div class="prow" style="margin-top:8px"><span>云端</span><span style="font-size:10.5px">${esc(Cloud.statusText())}</span></div>
         <div class="prow"><span>规模</span><span style="font-size:10.5px">${EVENTS.length} 事件 / ${EVENTS.reduce((s,e)=>s+e.nodes.length,0)} 节点</span></div>
       </div>
       <div class="pgroup">
@@ -3766,8 +3749,7 @@ fileInput.addEventListener('change', e => {
   requestAnimationFrame(() => {
     scrollInitial();
     Cloud.afterLoad();
-    if (loaded.migrated) setTimeout(() => UI.toast('已从旧版数据迁移（v' + (loaded.from === 'timeline.v1' ? 1 : 2) + ' → v3），历史数据保留'), 700);
-    else if (loaded.errors && loaded.errors.length) setTimeout(() => UI.toast('载入时有 ' + loaded.errors.length + ' 条校验告警，已尽量保留数据'), 700);
+    if (loaded.errors && loaded.errors.length) setTimeout(() => UI.toast('载入账号缓存时有 ' + loaded.errors.length + ' 条校验告警'), 700);
   });
 })();
 
