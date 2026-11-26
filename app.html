@@ -303,6 +303,25 @@ input,textarea,select{font-family:inherit;}
 /* ================= 弹窗 ================= */
 .modal{position:fixed;inset:0;z-index:90;display:none;place-items:center;background:rgba(30,28,25,.26);backdrop-filter:blur(3px);}
 .modal.open{display:grid;}
+
+/* 登录门禁：未登录时挡住工作台 */
+.gate{position:fixed;inset:0;z-index:200;display:none;place-items:center;
+  background:radial-gradient(1100px 520px at 50% -12%, #FDFCF8, var(--bg) 72%);}
+.gate.on{display:grid;}
+.gate-card{width:420px;max-width:92vw;background:var(--bg2);border:1px solid var(--line);border-radius:16px;
+  padding:28px 28px 22px;box-shadow:0 40px 90px -50px rgba(30,28,25,.55);animation:rise .24s ease-out both;}
+.gate-brand{display:flex;align-items:center;gap:10px;margin-bottom:18px;}
+.gate-brand .gm{width:30px;height:30px;border-radius:8px;background:var(--ink);display:grid;place-items:center;flex:none;}
+.gate-brand .gm svg{width:16px;height:16px;}
+.gate-brand b{font-family:'Noto Serif SC',serif;font-size:17px;letter-spacing:.14em;font-weight:600;}
+.gate-brand i{font-style:normal;font-size:9px;color:var(--muted);letter-spacing:.12em;margin-left:2px;}
+.gate-title{font-family:'Noto Serif SC',serif;font-size:20px;margin:0 0 6px;letter-spacing:.04em;font-weight:600;}
+.gate-desc{font-size:11.5px;color:var(--muted);line-height:1.9;margin:0 0 16px;}
+.gate .field{margin-bottom:10px;}
+.gate-msg{font-size:11px;color:#B4453A;min-height:17px;line-height:1.6;margin:2px 0 2px;}
+.gate-btns{display:flex;gap:8px;margin-top:4px;}
+.gate-btns .btn{flex:1;justify-content:center;}
+.gate-foot{font-size:10px;color:var(--muted);line-height:1.8;margin:14px 0 0;text-align:center;}
 .modal-card{width:440px;max-height:86vh;overflow:auto;background:var(--bg2);border-radius:14px;box-shadow:0 40px 80px -30px rgba(30,28,25,.5);border:1px solid var(--line);animation:rise .22s ease-out both;}
 @keyframes rise{from{opacity:0;transform:translateY(10px) scale(.985);}to{opacity:1;transform:none;}}
 .modal-head{display:flex;align-items:center;justify-content:space-between;padding:18px 20px 0;}
@@ -831,6 +850,7 @@ const Cloud = (() => {
     } else {
       try{ localStorage.setItem(uk, JSON.stringify(prev)); }catch(e){}
     }
+    hideGate();
     Render.all();
     await syncAfterLogin();
   }
@@ -935,6 +955,7 @@ const Cloud = (() => {
       const r = Persist.load();
       if (!r.ok) Import.apply({ schema:'timeflow', version:3, events: clone(SAMPLE.events), links: clone(SAMPLE.links) }, true);
       Render.all(); UI.toast('已退出账号');
+      showGate();
     });
   }
 
@@ -1009,11 +1030,56 @@ const Cloud = (() => {
     }catch(err){ fail(err); }
   }
 
+  /* ---- 登录门禁：未登录不得进入工作台 ---- */
+  function gateNode(){
+    let g = document.getElementById('authGate');
+    if (!g){ g = document.createElement('div'); g.id = 'authGate'; g.className = 'gate'; document.body.appendChild(g); }
+    return g;
+  }
+  function showGate(){
+    const g = gateNode();
+    g.innerHTML = `<div class="gate-card">
+      <div class="gate-brand"><span class="gm"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="7.4" stroke="#F6F4EE" stroke-width="1.6"/><path d="M12 6.4v5.6l4 2.4" stroke="#F6F4EE" stroke-width="1.6" stroke-linecap="round"/></svg></span><b>时迹</b><i>个人事件生命线</i></div>
+      <div class="gate-title">登录后进入工作台</div>
+      <div class="gate-desc">同一个账号，电脑、手机、平板看到同一份时间线。第一次用请点「注册」，只需邮箱和密码。</div>
+      <div class="field"><label>邮箱</label><input type="text" id="gateEmail" placeholder="you@example.com" autocomplete="username"></div>
+      <div class="field"><label>密码</label><input type="password" id="gatePass" placeholder="至少 6 位" autocomplete="current-password"></div>
+      <div class="gate-msg" id="gateMsg"></div>
+      <div class="gate-btns"><button class="btn solid" id="gateLogin">登录</button><button class="btn ghost" id="gateSignup">注册新账号</button></div>
+      <p class="gate-foot">记录会同步到你的账号，换设备登录仍在<br>本机原有记录可在登录后选择上传</p>
+    </div>`;
+    g.classList.add('on');
+    state.gate = true;
+    const em = document.getElementById('gateEmail');
+    const pw = document.getElementById('gatePass');
+    const msg = document.getElementById('gateMsg');
+    const run = async kind => {
+      const e = (em.value || '').trim(), p = pw.value || '';
+      if (!e || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)){ msg.textContent = '请填一个可用的邮箱地址'; return; }
+      if (p.length < 6){ msg.textContent = '密码至少 6 位'; return; }
+      msg.textContent = kind === 'login' ? '正在登录…' : '正在注册…';
+      try{ await (kind === 'login' ? login(e, p) : signup(e, p)); }
+      catch(err){ msg.textContent = (kind === 'login' ? '登录失败：' : '注册失败：') + ((err && err.message) || '请稍后重试'); }
+    };
+    const bl = document.getElementById('gateLogin');
+    const bs = document.getElementById('gateSignup');
+    if (bl) bl.onclick = () => run('login');
+    if (bs) bs.onclick = () => run('signup');
+    [em, pw].forEach(el => el.addEventListener('keydown', ev => { if (ev.key === 'Enter'){ ev.preventDefault(); run('login'); } }));
+    setTimeout(() => { try{ em.focus(); }catch(e){} }, 80);
+  }
+  function hideGate(){
+    const g = document.getElementById('authGate');
+    if (g){ g.classList.remove('on'); g.innerHTML = ''; }
+    state.gate = false;
+  }
+
   /* 本地保存时自动排队推送（包装 Persist.save，保持原语义） */
   const rawSave = Persist.save;
   Persist.save = function(){ const r = rawSave.apply(Persist, arguments); onSave(); return r; };
 
   return { boot, afterLoad, login, signup, signOut, syncNow, openAccount, statusText, signedIn, email,
+    showGate, hideGate, get gateOpen(){ return !!state.gate; },
     get status(){ return status; }, get lastSync(){ return lastSync; }, get rev(){ return rev; }, CFG };
 })();
 
@@ -3327,6 +3393,7 @@ function showErrors(){
 
   /* --- 键盘 --- */
   document.addEventListener('keydown', e => {
+    if (state.gate) return;
     const typing = ['INPUT','TEXTAREA','SELECT'].includes((e.target || {}).tagName);
     if (e.key === 'Escape'){
       if (UI.isOpen) UI.close();
@@ -3451,6 +3518,7 @@ fileInput.addEventListener('change', e => {
 /* ===================== 16. 启动 ===================== */
 (function init(){
   Cloud.boot();
+  if (!Cloud.signedIn()) Cloud.showGate();
   const loaded = Persist.load();
   if (!loaded.ok || !EVENTS.length){
     Import.apply({ schema:'timeflow', version:3, events: clone(SAMPLE.events), links: clone(SAMPLE.links) }, true);
