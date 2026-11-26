@@ -233,6 +233,7 @@ input,textarea,select{font-family:inherit;}
 .node-label.detail{display:block;line-height:1.35;}
 .node-label.detail .nd{display:inline;margin-right:5px;}
 .node-label.detail .nx{display:block;margin-top:1px;max-width:100%;}
+.node-label.detail .nx.att{color:var(--c);opacity:.85;}
 
 .hit{position:absolute;width:26px;cursor:crosshair;z-index:2;}
 .hit:hover{background:linear-gradient(to bottom,transparent,var(--c15),transparent);}
@@ -1530,8 +1531,8 @@ const Import = (() => {
       else if (typeof s.view === 'number') state.view = Math.min(VIEWS.length-1, Math.max(0, s.view));
     } else if (typeof s.view === 'number') state.view = Math.min(VIEWS.length-1, Math.max(0, s.view));
     if (typeof s.laneW === 'number') state.laneW = Math.min(2, Math.max(0, s.laneW));
-    if (s.density) state.density = s.density;
-    if (s.relMode) state.relMode = s.relMode;
+    if (s.density) state.density = (s.density === 'simple') ? 'simple' : 'detail';   /* 旧的「附件」档并入「详细」 */
+    if (s.relMode) state.relMode = (s.relMode === 'none') ? 'none' : 'all';          /* 旧的「当前」档已取消 */
     if (s.status) state.status = s.status;
     if (s.cat) state.cat = s.cat;
     if (typeof s.hideEnded === 'boolean') state.hideEnded = s.hideEnded;
@@ -1999,17 +2000,20 @@ const Render = (() => {
           const focus = state.focusNode === n.id ? 'focus' : '';
           const hit = (q && (n.title+' '+(n.text||'')).toLowerCase().includes(q)) ? 'hit' : '';
           const attN = (n.att || []).length;
+          const attTxt = attN
+            ? (n.att.map(a => a.name).filter(Boolean).slice(0, 2).join('、') + (attN > 2 ? ` 等 ${attN} 个` : ''))
+            : '';
           const isEndNode = ended && n.date === ev.end;
           let label = '';
           if (showLabels){
             if (state.density === 'detail'){
               label = `<div class="node-label detail ${focus} ${hit}" data-ev="${ev.id}" data-node="${n.id}" style="top:${ny-8}px;left:44px;width:${l.w-52}px" title="${esc(n.title)}｜${esc(n.text)}">
                 <span class="nd">${isEndNode ? '结束 ' : ''}${md(n.date)}</span><span class="nt">${esc(n.title)}</span>
-                ${n.text ? `<span class="nx">${esc(n.text)}</span>` : ''}</div>`;
+                ${n.text ? `<span class="nx">${esc(n.text)}</span>` : ''}
+                ${attTxt ? `<span class="nx att">📎 ${esc(attTxt)}</span>` : ''}</div>`;
             } else {
               label = `<div class="node-label ${focus} ${hit}" data-ev="${ev.id}" data-node="${n.id}" style="top:${ny-9}px;left:44px;width:${l.w-52}px" title="${esc(n.title)}｜${esc(n.text)}">
-                <span class="nd">${isEndNode ? '结束 ' : ''}${md(n.date)}</span><span class="nt">${esc(n.title)}</span>
-                ${(state.density === 'attach' && attN) ? `<span class="nx">📎${attN}</span>` : ''}</div>`;
+                <span class="nd">${isEndNode ? '结束 ' : ''}${md(n.date)}</span><span class="nt">${esc(n.title)}</span></div>`;
             }
           }
           /* 与开始/结束标记同一天时不重复画小圆点，避免遮住绿▶/红■ */
@@ -2054,13 +2058,14 @@ const Render = (() => {
   /* ---- 关系线 ---- */
   function relVisible(lk){
     if (state.relMode === 'none') return false;
-    if (state.relMode === 'current' && state.selected && lk.a !== state.selected && lk.b !== state.selected) return false;
     const c = cutDate();
     const A = findEv(lk.a), B = findEv(lk.b);
     if (!A || !B) return false;
     if (A.start > c || B.start > c) return false;
     return true;
   }
+  /* 选中某个事件时，只有跟它相连的关系线保持清晰，其余作为背景 */
+  const relaConnected = lk => state.selected && (lk.a === state.selected || lk.b === state.selected);
 
   function links(){
     const svg = document.getElementById('links');
@@ -2132,7 +2137,7 @@ const Render = (() => {
         d = `M${x1},${y1} Q${c1.x},${c1.y} ${x2},${y2}`;
       }
       const lw = lk.type === 'branch' ? 1.3 : (style.arrow ? 1.35 : 1.05);
-      const op = (state.selected && state.relMode === 'current') ? .95 : (lk.type === 'branch' ? .75 : .62);
+      const op = relaConnected(lk) ? 1 : (state.selected ? .16 : (lk.type === 'branch' ? .75 : .62));
       paths += `<path d="${d}" fill="none" stroke="${color}" stroke-width="${lw}" stroke-dasharray="${style.dash}"
         opacity="${op}" marker-end="${style.arrow ? 'url(#' + markerId[lk.type] + ')' : 'none'}"></path>`;
       paths += `<path class="relhit" data-rel="${lk.id}" d="${d}" fill="none" stroke="transparent" stroke-width="13"></path>`;
@@ -2281,10 +2286,10 @@ const Render = (() => {
           <button data-lane-all="expand">全部展开</button>
           <button data-lane-all="collapse">全部折叠</button></div></div>
         <div class="prow"><span>节点密度</span><div class="seg">
-          ${[['simple','简洁'],['detail','详细'],['attach','附件']].map(([k,t]) =>
+          ${[['simple','简洁'],['detail','详细']].map(([k,t]) =>
             `<button data-density="${k}" class="${state.density===k?'on':''}">${t}</button>`).join('')}</div></div>
         <div class="prow"><span>关系线</span><div class="seg">
-          ${[['all','全部'],['current','当前'],['none','隐藏']].map(([k,t]) =>
+          ${[['all','全部'],['none','隐藏']].map(([k,t]) =>
             `<button data-rel="${k}" class="${state.relMode===k?'on':''}">${t}</button>`).join('')}</div></div>
       </div>
       <div class="pgroup">
