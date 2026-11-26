@@ -40,7 +40,10 @@ input,textarea,select{font-family:inherit;}
 .brand .sub{font-size:9px;letter-spacing:.14em;color:var(--muted);margin-top:3px;}
 
 .stats{display:flex;gap:6px;align-items:center;flex:none;}
-.stat{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--ink2);padding:4px 9px;border:1px solid var(--line);border-radius:16px;background:var(--bg2);white-space:nowrap;}
+.stat{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--ink2);padding:4px 9px;border:1px solid var(--line);border-radius:16px;background:var(--bg2);white-space:nowrap;cursor:pointer;transition:background .15s,border-color .15s,color .15s;}
+.stat:hover{background:#fff;border-color:#CFC7B6;}
+.stat.on{background:var(--ink);color:#F8F6F0;border-color:var(--ink);}
+.stat.on i{box-shadow:0 0 0 2px rgba(255,255,255,.22);}
 .stat b{font-weight:600;font-variant-numeric:tabular-nums;}
 .stat i{width:6px;height:6px;border-radius:50%;font-style:normal;}
 
@@ -2254,14 +2257,19 @@ const Render = (() => {
         ? `<span>只看</span><b>${esc(isoEv.title)}</b><i>· ${isoSet(state.isolate).size} 条 ✕</i>`
         : '';
     }
-    const list = state.isolate ? VIEW_EVENTS.filter(e => isoSet(state.isolate).has(e.id)) : VIEW_EVENTS;
+    /* 统计是「总览」：不受状态/分类/搜索筛选影响，只随回放时间与「只看」变化 */
+    const cut = cutDate();
+    const list = state.isolate
+      ? EVENTS.filter(e => isoSet(state.isolate).has(e.id) && e.start <= cut)
+      : EVENTS.filter(e => e.start <= cut);
     const active = list.filter(e => statusOf(e) === '进行中').length;
     const ended = list.filter(e => statusOf(e) === '已结束').length;
-    const linkN = state.isolate ? VIEW_LINKS.filter(l => isoSet(state.isolate).has(l.a) && isoSet(state.isolate).has(l.b)).length : VIEW_LINKS.length;
+    const idset = new Set(list.map(e => e.id));
+    const linkN = LINKS.filter(l => idset.has(l.a) && idset.has(l.b)).length;
     document.getElementById('stats').innerHTML = `
-      <div class="stat"><i style="background:#D95F43"></i>进行中 <b>${active}</b></div>
-      <div class="stat"><i style="background:#9C9689"></i>已结束 <b>${ended}</b></div>
-      <div class="stat"><i style="background:#6F62A8"></i>关联 <b>${linkN}</b></div>`;
+      <div class="stat ${state.status==='active'?'on':''}" data-stat="active" title="点一下只看进行中的事件，再点恢复全部"><i style="background:#D95F43"></i>进行中 <b>${active}</b></div>
+      <div class="stat ${state.status==='ended'?'on':''}" data-stat="ended" title="点一下只看已结束的事件，再点恢复全部"><i style="background:#9C9689"></i>已结束 <b>${ended}</b></div>
+      <div class="stat" data-stat="rel" title="关系线数量 · 点开查看关系检查报告"><i style="background:#6F62A8"></i>关系 <b>${linkN}</b></div>`;
     const dt = new Date();
     document.getElementById('todayTxt').innerHTML =
       `今天 ${dt.getMonth()+1}.${pad(dt.getDate())} · ${WD[dt.getDay()]} <span class="back-today">回到今天</span>`;
@@ -3453,6 +3461,18 @@ function showErrors(){
     const rExit = e.target.closest('[data-replay-exit]');
     if (rExit){ exitReplay(); return; }
     const vb = e.target.closest('[data-view]'); if (vb){ setView(Number(vb.dataset.view)); return; }
+
+    /* 顶部统计：点数字就是筛选；点「关系」打开检查报告 */
+    const statEl = e.target.closest('[data-stat]');
+    if (statEl){
+      const k = statEl.dataset.stat;
+      if (k === 'rel'){ togglePanel(false); showAudit(); return; }
+      const want = (k === 'active') ? 'active' : 'ended';
+      state.status = (state.status === want) ? 'all' : want;
+      Render.all();
+      UI.toast(state.status === 'all' ? '已显示全部事件' : (want === 'active' ? '只看进行中' : '只看已结束'));
+      return;
+    }
 
     const isoBtn = e.target.closest('[data-iso]');
     if (isoBtn){
