@@ -102,6 +102,9 @@ input,textarea,select{font-family:inherit;}
 .diff-row{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px dashed var(--line);font-size:12px;color:var(--ink2);}
 .diff-row b{font-weight:600;}
 .diff-add{color:#2F7D6D;} .diff-cut{color:#B4453A;} .diff-same{color:#8C867B;}
+.imp-toggle{display:flex;gap:8px;align-items:flex-start;margin-top:12px;padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.55);font-size:12px;color:var(--ink2);cursor:pointer;line-height:1.5;}
+.imp-toggle input{margin-top:2px;accent-color:var(--ink);}
+.imp-toggle em{display:block;font-style:normal;font-size:10.5px;color:var(--muted);margin-top:3px;}
 
 /* ================= 轨道标题（固定） ================= */
 .laneHdr{
@@ -1541,29 +1544,80 @@ const Import = (() => {
     return v;
   }
 
-  /* 合并预演：只补入当前没有的事件与关系，不覆盖已有事件 */
-  function mergePlan(o){
+  /* 合并预演：按 ID 判重，可再按「标题 + 起始日期」识别同一条并补齐进展 */
+  function mergePlan(o, opt = {}){
     const v = validate(o, { silent:true });
     if (!v.ok) return { ok:false, errors:v.errors };
+    const byTitle = !!opt.dedupeTitle;
+    const keyOf = e => String(e.title || '').trim().replace(/\s+/g, ' ').toLowerCase() + '|' + e.start;
+
     const incoming = (v.events || []).filter(e => e && isDate(e.start)).map(normEvent).filter(Boolean);
     const curEv = clone(EVENTS), curLk = clone(LINKS);
     const ids = new Set(curEv.map(e => e.id));
-    const added = [], existed = [];
-    incoming.forEach(e => { if (ids.has(e.id)) existed.push(e); else { ids.add(e.id); added.push(e); } });
+    const titleKeys = new Map();
+    if (byTitle) curEv.forEach(e => { const k = keyOf(e); if (!titleKeys.has(k)) titleKeys.set(k, e); });
+
+    let added = 0, merged = 0, nodesAdded = 0, fieldsFilled = 0;
+    const idMap = new Map();            /* 文件里的 id → 最终事件 id */
+
+    incoming.forEach(src => {
+      let target = (src.id && ids.has(src.id)) ? curEv.find(e => e.id === src.id) : null;
+      if (!target && byTitle) target = titleKeys.get(keyOf(src)) || null;
+      if (!target){                     /* 新增 */
+        const ev = clone(src);
+        if (!ev.id || ids.has(ev.id)) ev.id = uid('e');
+        ids.add(ev.id);
+        if (byTitle) titleKeys.set(keyOf(ev), ev);
+        curEv.push(ev);
+        idMap.set(src.id, ev.id);
+        added++;
+        return;
+      }
+      /* 已存在：保留本机的标题/颜色/分类/开始时间，把文件里缺的部分补进来 */
+      const before = target.nodes.length;
+      const seenNode = new Set(target.nodes.map(n => n.date + '|' + String(n.title || '').trim()));
+      (src.nodes || []).forEach(n => {
+        const k = n.date + '|' + String(n.title || '').trim();
+        if (seenNode.has(k)) return;
+        seenNode.add(k);
+        target.nodes.push(clone(n));
+      });
+      nodesAdded += target.nodes.length - before;
+      if (!target.end && src.end && src.end >= target.start){ target.end = src.end; fieldsFilled++; }
+      if (!target.desc && src.desc){ target.desc = src.desc; fieldsFilled++; }
+      if (!target.category && src.category){ target.category = src.category; fieldsFilled++; }
+      const seenAtt = new Set((target.att || []).map(a => String(a.name || '') + '|' + String(a.url || '')));
+      (src.att || []).forEach(a => {
+        const k = String(a.name || '') + '|' + String(a.url || '');
+        if (seenAtt.has(k)) return;
+        seenAtt.add(k);
+        if (!target.att) target.att = [];
+        target.att.push(Object.assign({}, a, { id: uid('a') }));
+        fieldsFilled++;
+      });
+      idMap.set(src.id, target.id);
+      merged++;
+    });
+
+    /* 关系：按事件身份重映射，去掉重复 */
     const lset = new Set(curLk.map(l => [l.a, l.b, l.type].join('|')));
     const lids = new Set(curLk.map(l => l.id));
     const addedLinks = [];
     (v.links || []).map(normLink).filter(Boolean).forEach(l => {
-      const key = [l.a, l.b, l.type].join('|');
+      const a = idMap.get(l.a) || l.a, b = idMap.get(l.b) || l.b;
+      if (!ids.has(a) || !ids.has(b)) return;
+      const key = [a, b, l.type].join('|');
       if (lset.has(key)) return;
       lset.add(key);
-      if (!l.id || lids.has(l.id)) l.id = uid('l');
-      lids.add(l.id);
-      addedLinks.push(l);
+      const lk = Object.assign({}, l, { a, b });
+      if (!lk.id || lids.has(lk.id)) lk.id = uid('l');
+      lids.add(lk.id);
+      addedLinks.push(lk);
     });
-    const events = sortEvents(curEv.concat(added));
-    const links = curLk.concat(addedLinks);
-    return { ok:true, events, links, added:added.length, existed:existed.length, addedLinks:addedLinks.length, total:incoming.length };
+
+    const events = sortEvents(curEv);
+    return { ok:true, events, links:curLk.concat(addedLinks), added, merged, nodesAdded, fieldsFilled,
+      addedLinks:addedLinks.length, total:incoming.length, dedupeTitle:byTitle };
   }
 
   return { validate, apply, fromText, mergePlan };
@@ -2889,10 +2943,10 @@ const Actions = (() => {
 
   function replaceAll(o){ return Import.apply(o); }
 
-  /* 合并导入：保留现有事件，只补入文件里多出来的部分 */
-  function mergeImport(o){
+  /* 合并导入：识别同一条事件（ID 或标题+起始日期），保留本机内容并补齐缺失部分 */
+  function mergeImport(o, opt){
     if (isReadOnly()){ UI.toast('回放只读'); return false; }
-    const plan = Import.mergePlan(o);
+    const plan = Import.mergePlan(o, opt || {});
     if (!plan.ok) return false;
     Hist.push();
     const applied = Import.apply({ schema:'timeflow', version:3, events:plan.events, links:plan.links }, true);
@@ -3624,38 +3678,58 @@ function askClear(){
 
 /* 导入：先给出差异与两种方式 */
 function showImportChoice(text, v){
+  let parsed;
+  try{ parsed = JSON.parse(text); }catch(e){ UI.toast('文件解析失败'); return; }
   const incoming = v.events.filter(e => e && isDate(e.start));
-  const curIds = new Set(EVENTS.map(e => e.id));
   const inIds = new Set(incoming.map(e => e.id).filter(Boolean));
-  const add = incoming.filter(e => e.id && !curIds.has(e.id)).length;
-  const same = incoming.length - add;
   const drop = EVENTS.filter(e => e.id && !inIds.has(e.id)).length;
-  UI.open({ title:'导入数据', okOnly:true, wide:true,
-    desc:'文件校验通过。可以选择只补入缺少的部分（保留现有记录），或整库替换。',
-    html:`<div class="dlist">
-        <div class="diff-row"><span>文件里的事件</span><b>${incoming.length}</b></div>
-        <div class="diff-row"><span class="diff-add">合并时新增</span><b class="diff-add">${add}</b></div>
-        <div class="diff-row"><span class="diff-same">已存在（合并时保留现有）</span><b class="diff-same">${same}</b></div>
+
+  const rowsHTML = plan => `<div class="diff-row"><span>文件里的事件</span><b>${plan.total}</b></div>
+        <div class="diff-row"><span class="diff-add">合并时新增</span><b class="diff-add">${plan.added}</b></div>
+        <div class="diff-row"><span class="diff-same">识别为同一条 · 补齐</span><b class="diff-same">${plan.merged}</b></div>
+        <div class="diff-row"><span class="diff-same">其中补入进展节点</span><b class="diff-same">${plan.nodesAdded}</b></div>
         <div class="diff-row"><span class="diff-cut">替换时会被删除</span><b class="diff-cut">${drop}</b></div>
-        <div class="diff-row"><span>关系</span><b>${(v.links || []).length}</b></div>
-      </div>
+        <div class="diff-row"><span>关系（新增 ${plan.addedLinks}）</span><b>${(v.links || []).length}</b></div>`;
+
+  const planFor = dedupeTitle => Import.mergePlan(parsed, { dedupeTitle });
+  let plan = planFor(true);
+
+  UI.open({ title:'导入数据', okOnly:true, wide:true,
+    desc:'文件校验通过。合并只会补入缺少的事件、给已有事件补齐进展；替换会整库覆盖。',
+    html:`<div class="dlist" id="impDiff">${rowsHTML(plan)}</div>
+      <label class="imp-toggle"><input type="checkbox" id="impDedupe" checked>
+        <span>按「标题 + 起始日期」识别同一条事件<em>关了只按内部 ID 判重，跨工具导入时容易重复</em></span></label>
       ${v.warnings.length ? `<div class="dlist" style="margin-top:10px">${v.warnings.map(x => `<div class="audit-item"><b>!</b><span>${esc(x)}</span></div>`).join('')}</div>` : ''}
       <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
-        <button class="btn solid" id="impMerge">合并导入（补入 ${add} 条）</button>
+        <button class="btn solid" id="impMerge">合并导入</button>
         <button class="btn ghost" id="impReplace">替换全部数据</button>
       </div>` });
-  const merge = document.getElementById('impMerge');
+
+  const diffBox = document.getElementById('impDiff');
+  const mergeBtn = document.getElementById('impMerge');
   const replace = document.getElementById('impReplace');
-  if (merge) merge.onclick = () => {
+  const dedupe = document.getElementById('impDedupe');
+  const refresh = () => {
+    plan = planFor(!!(dedupe && dedupe.checked));
+    if (diffBox) diffBox.innerHTML = rowsHTML(plan);
+    if (mergeBtn) mergeBtn.textContent = plan.merged ? `合并导入（补入 ${plan.added} · 补齐 ${plan.merged}）` : `合并导入（补入 ${plan.added} 条）`;
+  };
+  if (dedupe) dedupe.onchange = refresh;
+  refresh();
+
+  if (mergeBtn) mergeBtn.onclick = () => {
+    const opt = { dedupeTitle: !!(dedupe && dedupe.checked) };
     UI.close();
-    const r = Actions.mergeImport(JSON.parse(text));
-    if (r){ scrollToDate(TODAY, false); UI.toast(`已合并 ${r.added} 条事件、${r.addedLinks} 条关系，现有记录保留`); }
-    else UI.toast('合并失败，原有数据保持不变');
+    const r = Actions.mergeImport(parsed, opt);
+    if (r){
+      scrollToDate(TODAY, false);
+      UI.toast(`已合并：新增 ${r.added} 条，补齐 ${r.merged} 条（${r.nodesAdded} 个进展节点）`);
+    } else UI.toast('合并失败，原有数据保持不变');
   };
   if (replace) replace.onclick = () => {
     UI.close();
     UI.confirmBox('替换全部数据', `会用文件内容覆盖当前 ${EVENTS.length} 个事件，当前数据将被移除（可 Ctrl+Z 撤销，建议先导出）。`, '确认替换', () => {
-      if (Actions.replaceAll(JSON.parse(text))){ scrollToDate(TODAY, false); UI.toast('已替换为 ' + EVENTS.length + ' 个事件'); }
+      if (Actions.replaceAll(parsed)){ scrollToDate(TODAY, false); UI.toast('已替换为 ' + EVENTS.length + ' 个事件'); }
       else UI.toast('替换失败，原有数据保持不变');
     });
   };
