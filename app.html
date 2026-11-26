@@ -2512,6 +2512,7 @@ const Render = (() => {
           <div class="meta-grid">
             <div><span>类型</span><b>${esc(kindTxt)}</b></div>
             <div><span>添加时间</span><b>${fmt(added)}</b></div>
+            <div><span>最近更新</span><b>${fmt(a.updatedAt ? new Date(a.updatedAt) : added)}</b></div>
           </div>
           ${isImg && url ? `<div class="dsec"><h4>预览</h4>
             <div style="border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fff;display:grid;place-items:center;max-height:220px">
@@ -2519,6 +2520,10 @@ const Render = (() => {
             </div>
             <div class="muted" style="font-size:11px;margin-top:6px">预览失败说明链接不可直接访问，可点下方「打开链接」用浏览器查看。</div>
           </div>` : ''}
+          <div class="dsec">
+            <h4>说明</h4>
+            <div class="result-box ${a.note?'':'empty'}" style="word-break:break-all">${a.note ? esc(a.note) : '还没有说明，可点「编辑附件」补充这份资料的内容、位置和用法。'}</div>
+          </div>
           <div class="dsec">
             <h4>链接</h4>
             <div class="result-box ${url?'':'empty'}" style="word-break:break-all;user-select:text">${url ? esc(url) : '这个附件只记录了名称，没有链接。'}</div>
@@ -2530,6 +2535,7 @@ const Render = (() => {
           <div class="dbody">
             <div class="acts">
               <button data-att-back="1">← 返回${v.kind === 'node' ? '节点详情' : '事件详情'}</button>
+              ${ro ? '' : `<button data-att-edit="${a.id}">✎ 编辑附件</button>`}
               ${ro ? '' : `<button class="danger" data-att-del="${a.id}" data-kind="${v.kind}">删除附件</button>`}
             </div>
           </div>`;
@@ -2581,7 +2587,7 @@ const Render = (() => {
           </div>
           ${fAtt.length ? `<div class="dsec"><h4>节点附件 · ${fAtt.length}</h4><div class="dlist">
             ${fAtt.map(a => `<div class="drow att" data-att-view="${a.id}" data-kind="node" data-node="${focusNd.id}" style="cursor:pointer" title="点击查看附件详情">
-              <i style="background:${ev.color}"></i><span>${esc(a.name)}</span><em>${a.url ? '有链接' : '仅名称'}</em>
+              <i style="background:${ev.color}"></i><span>${esc(a.name)}</span><em>${a.url ? '有链接' : '仅名称'}${a.note ? ' · 有说明' : ''}</em>
               ${isReadOnly()?'':`<button class="mini-del" data-att-del="${a.id}" data-kind="node">✕</button>`}</div>`).join('')}
           </div></div>` : ''}
           <div class="dsec">
@@ -2656,7 +2662,7 @@ const Render = (() => {
         </div>
         ${(ev.att||[]).length ? `<div class="dsec"><h4>附件 · ${ev.att.length}</h4><div class="dlist">
           ${ev.att.map(a => `<div class="drow att" data-att-view="${a.id}" data-kind="event" style="cursor:pointer" title="点击查看附件详情">
-            <i style="background:${ev.color}"></i><span>${esc(a.name)}</span><em>${a.url ? '有链接' : '仅名称'}</em>
+            <i style="background:${ev.color}"></i><span>${esc(a.name)}</span><em>${a.url ? '有链接' : '仅名称'}${a.note ? ' · 有说明' : ''}</em>
             ${isReadOnly()?'':`<button class="mini-del" data-att-del="${a.id}" data-kind="event">✕</button>`}</div>`).join('')}
         </div></div>` : ''}
         <div class="dsec">
@@ -2978,11 +2984,20 @@ const Actions = (() => {
 
   function attach(kind, id, nodeId, p){
     if (!p || !p.name){ UI.toast('请填写附件名称'); return false; }
-    const att = { id: uid('a'), name: p.name, url: p.url || '', addedAt: Date.now() };
+    const att = { id: uid('a'), name: p.name, url: p.url || '', note: p.note || '', addedAt: Date.now() };
     const ev = findLive(id); if (!ev) return false;
     const target = kind === 'node' ? ev.nodes.find(x => x.id === nodeId) : ev;
     if (!target) return false;
     return commit(() => { target.att = target.att || []; target.att.push(att); });
+  }
+
+  function updateAtt(kind, id, nodeId, attId, p){
+    if (!p || !p.name){ UI.toast('请填写附件名称'); return false; }
+    const ev = findLive(id); if (!ev) return false;
+    const target = kind === 'node' ? ev.nodes.find(x => x.id === nodeId) : ev;
+    if (!target) return false;
+    const a = (target.att || []).find(x => x.id === attId); if (!a) return false;
+    return commit(() => { a.name = p.name; a.url = p.url || ''; a.note = p.note || ''; a.updatedAt = Date.now(); });
   }
 
   function detach(kind, id, nodeId, attId){
@@ -3054,7 +3069,7 @@ const Actions = (() => {
   }
 
   return { createEvent, updateEvent, addNode, updateNode, moveNode, deleteNode, createBranch, endEvent, reopen,
-    removeEvent, restoreTrash, setResult, attach, detach, link, updateLink, unlink,
+    removeEvent, restoreTrash, setResult, attach, updateAtt, detach, link, updateLink, unlink,
     replaceAll, mergeImport, clearAll, loadSample };
 })();
 
@@ -3275,17 +3290,24 @@ function formResult(id){
   });
 }
 
-function formAttachment(kind, id, nodeId){
+function formAttachment(kind, id, nodeId, attId){
+  const ev = findLive(id); if (!ev) return;
+  const holder = kind === 'node' ? ev.nodes.find(x => x.id === nodeId) : ev;
+  const old = attId && holder ? (holder.att || []).find(x => x.id === attId) : null;
+  if (attId && !old){ UI.toast('这条附件已不存在'); return; }
   UI.open({
-    title:'添加附件',
-    desc:'附件以「名称 + 链接」形式随事件一起持久保存（不写入本地文件内容）。',
+    title: old ? '编辑附件' : '添加附件',
+    desc: old ? '可修改名称、链接和说明，保存后立即更新到这条时间线。'
+               : '附件用来收拢资料：文档、工具、链接都可以记在这里，只保存名称、链接与说明，不写入文件内容。',
     fields:[
-      { type:'text', key:'name', label:'附件名称', placeholder:'例如：需求文档 / 会议纪要' },
-      { type:'text', key:'url', label:'链接（可留空）', placeholder:'https://…' },
+      { type:'text', key:'name', label:'附件名称', placeholder:'例如：需求文档 / 会议纪要 / 部署脚本说明', value: old ? old.name : '' },
+      { type:'text', key:'url', label:'链接 / 文件地址（可留空）', placeholder:'https://… 或 网盘路径、仓库地址', value: old ? old.url : '' },
+      { type:'textarea', key:'note', label:'说明（可留空）', placeholder:'这份资料是什么、放在哪、怎么用', value: old ? (old.note || '') : '', rows:5, count:true },
     ],
-    ok:'添加',
+    ok: old ? '保存修改' : '添加',
     onSubmit(v){
-      if (Actions.attach(kind, id, nodeId, v)){ UI.close(); UI.toast('附件已添加'); }
+      const done = old ? Actions.updateAtt(kind, id, nodeId, attId, v) : Actions.attach(kind, id, nodeId, v);
+      if (done){ UI.close(); UI.toast(old ? '附件已更新' : '附件已添加'); if (state.attView) Render.all(); }
     }
   });
 }
@@ -3569,6 +3591,12 @@ function showErrors(){
           try { document.execCommand('copy'); done(); } catch(_){ UI.toast('复制失败，可手动选中链接'); }
           document.body.removeChild(ta);
         }
+        return;
+      }
+      const attEdit = e.target.closest('[data-att-edit]');
+      if (attEdit){
+        if (!state.attView){ UI.toast('请先打开附件详情'); return; }
+        formAttachment(state.attView.kind, state.selected, state.attView.nodeId, attEdit.dataset.attEdit);
         return;
       }
       const attDel = e.target.closest('[data-att-del]');
