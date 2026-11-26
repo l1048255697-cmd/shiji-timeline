@@ -274,8 +274,8 @@ input,textarea,select{font-family:inherit;}
 .drawer.open{transform:none;}
 .drawer-head{padding:20px 22px 14px;border-bottom:1px solid var(--line2);position:relative;}
 .drawer-head .row1{display:flex;align-items:center;gap:7px;font-size:9.5px;letter-spacing:.16em;color:var(--muted);}
-.drawer-head h2{font-family:'Noto Serif SC',serif;font-size:19px;font-weight:600;margin:9px 0 0;letter-spacing:.03em;line-height:1.35;padding-right:28px;}
-.drawer-head .desc{font-size:11.5px;color:var(--muted);line-height:1.65;margin-top:6px;}
+.drawer-head h2{font-family:'Noto Serif SC',serif;font-size:19px;font-weight:600;margin:9px 0 0;letter-spacing:.03em;line-height:1.35;padding-right:28px;overflow-wrap:anywhere;}
+.drawer-head .desc{font-size:11.5px;color:var(--muted);line-height:1.65;margin-top:6px;overflow-wrap:anywhere;white-space:pre-wrap;}
 .drawer-close{position:absolute;top:16px;right:14px;width:28px;height:28px;border-radius:8px;color:var(--muted);font-size:14px;display:grid;place-items:center;}
 .drawer-close:hover{background:#EFEBE1;color:var(--ink);}
 .meta-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;background:var(--line2);border-bottom:1px solid var(--line2);}
@@ -317,7 +317,7 @@ input,textarea,select{font-family:inherit;}
 .drow em{font-style:normal;font-size:10px;color:var(--muted);}
 .drow.att a{color:var(--ink2);text-decoration:none;border-bottom:1px solid var(--line);}
 .empty-note{font-size:11px;color:var(--muted);line-height:1.7;}
-.result-box{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size:11.5px;line-height:1.65;color:var(--ink2);background:var(--bg);}
+.result-box{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size:11.5px;line-height:1.65;color:var(--ink2);background:var(--bg);overflow-wrap:anywhere;white-space:pre-wrap;}
 .result-box.empty{color:var(--muted);}
 
 /* ================= 弹窗 ================= */
@@ -2553,7 +2553,6 @@ const Render = (() => {
           <div class="row1"><span style="width:7px;height:7px;border-radius:50%;background:${ev.color};display:inline-block"></span>
             节点详情 · 第 ${dayNo} 天${isReadOnly()?' · 历史快照':''}</div>
           <h2>${esc(focusNd.title)}</h2>
-          ${focusNd.text ? `<div class="desc">${esc(focusNd.text)}</div>` : '<div class="desc" style="color:var(--muted)">这条节点还没有补充说明</div>'}
           <button class="drawer-close" id="dClose">✕</button>
         </div>
         <div class="meta-grid">
@@ -2586,7 +2585,7 @@ const Render = (() => {
           </div></div>` : ''}
           <div class="dsec">
             <h4>这条节点的完整记录</h4>
-            <div class="result-box ${focusNd.text?'':'empty'}">${focusNd.text ? esc(focusNd.text) : '尚无说明，可点「编辑节点」补充背景、结果与附件。'}</div>
+            <div class="result-box ${focusNd.text?'':'empty'}" style="word-break:break-all">${focusNd.text ? esc(focusNd.text) : '尚无说明，可点「编辑节点」补充背景、结果与附件。'}</div>
           </div>
         </div>`;
       dr.style.setProperty('--c', ev.color);
