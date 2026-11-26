@@ -853,7 +853,7 @@ const Cloud = (() => {
     await syncAfterLogin();
   }
 
-  /* ---- 同步：云端为准，本机数据自动留存为可恢复备份 ---- */
+  /* ---- 同步：云端为准；本机不同的旧数据存成云端快照，复用「云端历史版本」找回 ---- */
   async function syncAfterLogin(){
     status = 'sync'; Render.saveBadge();
     try{
@@ -862,74 +862,37 @@ const Cloud = (() => {
       const row = rows && rows[0];
       if (!row){ await push(true); UI.toast('已登录 · 本机数据已上传到账号'); return; }
       const localRev = readRev();
-      if (row.rev >= localRev){ adoptCloud(row, localRev); return; }
+      if (row.rev >= localRev){ await adoptCloud(row, localRev); return; }
       await push();
     }catch(err){ fail(err); }
   }
 
-  /* 云端版本不旧于本机：直接采用云端；本机原有内容先留一份备份，可随时找回 */
-  function adoptCloud(row, localRev){
-    if (EVENTS.length && Persist.getKey() !== Persist.KEY) stashLocal(localRev);
-    applyRemote(row, true);
+  const sameEvents = (a, b) => JSON.stringify((a || []).map(e => [e.id, e.title, e.start, e.end]))
+    === JSON.stringify((b || []).map(e => [e.id, e.title, e.start, e.end]));
+
+  /* 云端版本不旧于本机：采纳云端；若本机内容不同，先把本机存成一条云端快照 */
+  async function adoptCloud(row, localRev){
+    const local = Persist.pack();
+    let snapshotted = false;
+    if (local.events.length && !sameEvents(local.events, row.data && row.data.events)){
+      try{
+        await api('/rest/v1/revisions', { method:'POST', headers:{ Prefer:'return=minimal' },
+          body:[{ user_id: sess.user.id, rev: localRev || 1, data: local }] });
+        snapshotted = true;
+      }catch(e){}
+    }
+    applyRemote(row, snapshotted, local.events.length);
   }
 
-  function stashKey(){ return sess ? 'tf.localbak.' + sess.user.id : null; }
-  function stashLocal(revAt){
-    const k = stashKey(); if (!k) return;
-    try{ localStorage.setItem(k, JSON.stringify({ at: Date.now(), rev: revAt || 0, data: Persist.pack() })); }catch(e){}
-  }
-  function readStash(){
-    const k = stashKey(); if (!k) return null;
-    try{ const raw = localStorage.getItem(k); return raw ? JSON.parse(raw) : null; }catch(e){ return null; }
-  }
-  const hasLocalStash = () => !!readStash();
-  function clearStash(){
-    const k = stashKey(); if (!k) return;
-    try{ localStorage.removeItem(k); }catch(e){}
-  }
-
-  function applyRemote(row, silent){
+  function applyRemote(row, snapshotted, localN){
     try{ Import.apply(row.data, true); }catch(err){ fail(err); return; }
     rev = Number(row.rev) || 0;
     writeRev(rev);
     status = 'ok'; lastSync = Date.now();
     Render.all(); scrollToDate(TODAY, false);
     const n = EVENTS.length;
-    if (silent && hasLocalStash()){
-      UI.toast(`已载入云端记录 · ${n} 个事件；本机原有数据已另存，可从「数据 → 本机旧记录」找回`);
-    } else UI.toast('已同步云端数据 · ' + n + ' 个事件');
-  }
-
-  /* 找回本机旧记录 */
-  function openLocalStash(){
-    const s = readStash();
-    if (!s || !s.data){ UI.toast('没有本机旧记录'); return; }
-    const n = s.data.events ? s.data.events.length : 0;
-    const when = fmtTime(new Date(s.at).toISOString());
-    UI.open({ title:'本机旧记录', okOnly:true, wide:true,
-      desc:`这是 ${when} 时本机保存的一份记录（${n} 个事件），当时被云端版本替代。可以合并进当前时间线，或整份替换。`,
-      html:`<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
-        <button class="btn solid" id="stMerge">合并进当前</button>
-        <button class="btn ghost" id="stReplace">替换当前数据</button>
-        <button class="btn ghost" id="stDrop">删除这份备份</button>
-      </div>` });
-    const m = document.getElementById('stMerge');
-    const r = document.getElementById('stReplace');
-    const d = document.getElementById('stDrop');
-    if (m) m.onclick = () => {
-      UI.close();
-      const res = Actions.mergeImport(s.data, { dedupeTitle:true });
-      if (res){ clearStash(); scrollToDate(TODAY, false); UI.toast(`已合并本机旧记录：新增 ${res.added} 条，补齐 ${res.merged} 条`); }
-      else UI.toast('合并失败，现有数据未变');
-    };
-    if (r) r.onclick = () => {
-      UI.close();
-      UI.confirmBox('替换为旧记录', `会用 ${when} 的本机备份覆盖当前时间线（可 Ctrl+Z 撤销）。`, '确认替换', () => {
-        if (Actions.replaceAll(s.data)){ clearStash(); scrollToDate(TODAY, false); UI.toast('已恢复为本机旧记录'); }
-        else UI.toast('替换失败');
-      });
-    };
-    if (d) d.onclick = () => { clearStash(); UI.close(); UI.toast('已删除本机旧记录备份'); };
+    if (snapshotted) UI.toast(`已采用云端记录 · ${n} 个事件；本机原有 ${localN} 条已存入「云端历史版本」，可随时回滚`);
+    else UI.toast('已同步云端数据 · ' + n + ' 个事件');
   }
 
   async function push(force){
@@ -1112,7 +1075,7 @@ const Cloud = (() => {
       const row = rows && rows[0];
       const localRev = readRev();
       if (!row){ await push(true); UI.toast('已上传到云端'); return; }
-      if (row.rev > localRev){ adoptCloud(row, localRev); return; }
+      if (row.rev > localRev){ await adoptCloud(row, localRev); return; }
       await push(true);
       UI.toast('已同步到云端');
     }catch(err){ fail(err); }
@@ -1166,8 +1129,8 @@ const Cloud = (() => {
   const rawSave = Persist.save;
   Persist.save = function(){ const r = rawSave.apply(Persist, arguments); onSave(); return r; };
 
-  return { boot, afterLoad, login, signup, signOut, syncNow, openAccount, openHistory, openLocalStash,
-    hasLocalStash, statusText, signedIn, email,
+  return { boot, afterLoad, login, signup, signOut, syncNow, openAccount, openHistory,
+    statusText, signedIn, email,
     showGate, hideGate, get gateOpen(){ return !!state.gate; },
     get status(){ return status; }, get lastSync(){ return lastSync; }, get rev(){ return rev; }, CFG };
 })();
@@ -2357,7 +2320,6 @@ const Render = (() => {
           <button data-menu="export-md">导出可读文本（Markdown）</button>
           <button data-menu="import">导入（合并或替换）</button>
           ${Cloud.signedIn() ? '<button data-menu="history">云端历史版本</button>' : ''}
-          ${Cloud.signedIn() && Cloud.hasLocalStash() ? '<button data-menu="local-stash">本机旧记录（可找回）</button>' : ''}
         </div>
         <div class="prow" style="margin-top:8px"><span>存储</span><span style="font-size:10.5px">${state.save==='ok'?'已保存':'<b style="color:#B4453A">保存失败</b>'}</span></div>
         <div class="prow"><span>规模</span><span style="font-size:10.5px">${EVENTS.length} 事件 / ${EVENTS.reduce((s,e)=>s+e.nodes.length,0)} 节点</span></div>
@@ -3682,7 +3644,6 @@ function doMenu(k){
   if (k === 'export-md') return exportMarkdown();
   if (k === 'import'){ togglePanel(false); fileInput.click(); return; }
   if (k === 'history'){ togglePanel(false); Cloud.openHistory(); return; }
-  if (k === 'local-stash'){ togglePanel(false); Cloud.openLocalStash(); return; }
   if (k === 'undo'){ Hist.undo(); return; }
   if (k === 'redo'){ Hist.redo(); return; }
   if (k === 'trash'){ showTrash(); return; }
@@ -3843,6 +3804,7 @@ window.TF = {
 </script>
 </body>
 </html>
+
 
 
 
