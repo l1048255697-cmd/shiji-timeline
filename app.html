@@ -874,6 +874,7 @@ const Cloud = (() => {
       try{
         await api('/rest/v1/revisions', { method:'POST', headers:{ Prefer:'return=minimal' },
           body:[{ user_id: sess.user.id, rev: localRev || 1, data: local }] });
+        pruneRevisions();
       }catch(e){}
     }
     applyRemote(row, silent);
@@ -902,7 +903,7 @@ const Cloud = (() => {
       status = 'ok'; lastSync = Date.now();
       if (rev % 5 === 1){
         api('/rest/v1/revisions', { method:'POST', headers:{ Prefer:'return=minimal' },
-          body:[{ user_id: sess.user.id, rev, data }] }).catch(() => {});
+          body:[{ user_id: sess.user.id, rev, data }] }).then(pruneRevisions).catch(() => {});
       }
     }catch(err){ fail(err); }
     finally{ busy = false; Render.saveBadge(); }
@@ -916,6 +917,19 @@ const Cloud = (() => {
   }
 
   /* ---- 历史版本（云端快照） ---- */
+  /* 每个账号只保留最近 KEEP_SNAPSHOTS 份云快照，更早的自动清理，避免无限占存储 */
+  const KEEP_SNAPSHOTS = 60;
+  async function pruneRevisions(){
+    try{
+      const rows = await api('/rest/v1/revisions?select=id&user_id=eq.' + sess.user.id +
+        '&order=created_at.desc&offset=' + KEEP_SNAPSHOTS + '&limit=200');
+      if (!rows || !rows.length) return;
+      const ids = rows.map(r => r.id).join(',');
+      await api('/rest/v1/revisions?id=in.(' + ids + ')&user_id=eq.' + sess.user.id,
+        { method:'DELETE', headers:{ Prefer:'return=minimal' } });
+    }catch(e){}
+  }
+
   function fmtTime(iso){
     if (!iso) return '—';
     const d = new Date(iso);
@@ -947,7 +961,7 @@ const Cloud = (() => {
         <button class="mini-btn" data-rev="${esc(String(r.id))}">恢复</button></div>`;
     }).join('');
     UI.open({ title:'云端历史版本', okOnly:true, wide:true,
-      desc:'这些是云端自动留存的快照。恢复前会先把当前数据另存为一份快照，所以不必担心找不回来。',
+      desc:'系统每保存 5 次留一份快照，每个账号只保留最近 60 份，更早的会自动清理。恢复前会先把当前数据另存为一份快照，所以不必担心找不回来。',
       html:`<div class="dlist" id="revList">${rowsHtml}</div>` });
     const mEl = document.getElementById('modal');
     rows.forEach(r => {
@@ -958,6 +972,7 @@ const Cloud = (() => {
           try{
             await api('/rest/v1/revisions', { method:'POST', headers:{ Prefer:'return=minimal' },
               body:[{ user_id: sess.user.id, rev: readRev() || 1, data: Persist.pack() }] });
+            pruneRevisions();
           }catch(e){}
           if (!Import.apply(r.data, true)){ UI.toast('这个快照数据不完整，未恢复'); return; }
           Render.all(); scrollToDate(TODAY, false);
