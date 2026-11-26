@@ -2326,9 +2326,11 @@ const Render = (() => {
           <button class="pbtn" data-jump>跳转</button></div>
         ${state.jumpTo ? `<div class="prow"><span style="font-size:10.5px;color:var(--muted)">已定位 ${ymd(state.jumpTo)}</span>
           <button class="pbtn" data-jump-clear>清除定位</button></div>` : ''}
-        <div class="prow"><span>历史回放</span><input type="date" id="replayDate" value="${state.replay || TODAY}">
+        <div class="prow"><span>历史回放</span><input type="date" id="replayDate" value="${state.replay || addDays(TODAY,-1)}">
           <button class="pbtn" data-replay>${state.replay ? '更新' : '回放'}</button></div>
-        ${state.replay ? `<div class="prow"><button class="pbtn" data-replay-exit style="width:100%">退出回放（只读中）</button></div>` : ''}
+        ${state.replay ? `<div class="prow"><button class="pbtn" data-replay-exit style="width:100%">退出回放（只读中）</button></div>` : `
+        <div class="prow"><span style="font-size:10.5px;color:var(--muted)">快捷</span><div class="seg">
+          <button data-replay-set="7">7 天前</button><button data-replay-set="30">30 天前</button><button data-replay-set="month">上月末</button></div></div>`}
       </div>
       <div class="pgroup">
         <h5>编辑与恢复</h5>
@@ -2372,7 +2374,18 @@ const Render = (() => {
     const pill = document.getElementById('replayPill');
     if (!state.replay){ pill.classList.remove('open'); pill.innerHTML = ''; return; }
     const note = state.replayEarly ? ' · 日志起点前，显示最早可知状态' : '';
-    pill.innerHTML = `<span>历史回放 · ${ymd(state.replay)} · 只读${note}</span><button data-replay-exit>退出回放</button>`;
+    const nowNodes = EVENTS.reduce((s, e) => s + e.nodes.length, 0);
+    const thenNodes = VIEW_EVENTS.reduce((s, e) => s + e.nodes.length, 0);
+    const laterNodes = Math.max(0, nowNodes - thenNodes);
+    const laterEvs = Math.max(0, EVENTS.length - VIEW_EVENTS.length);
+    const diff = state.replayEarly ? ''
+      : ((laterNodes || laterEvs)
+        ? ` · 从这天到今天：+${laterNodes} 条进展${laterEvs ? ' / +' + laterEvs + ' 个事件' : ''}`
+        : ' · 与当前一致');
+    pill.innerHTML = `<span>回放 · ${ymd(state.replay)} · 只读${note}${diff}</span>
+      <button data-replay-step="-1" title="前一天（←）">‹</button>
+      <button data-replay-step="1" title="后一天（→）">›</button>
+      <button data-replay-exit>回到今天</button>`;
     pill.classList.add('open');
   }
 
@@ -3061,14 +3074,25 @@ function zoomBy(dir){
   UI.toast('视图 · ' + VIEWS[i].n + (VIEWS[i].band ? '（按' + (VIEWS[i].band === 'week' ? '周' : VIEWS[i].band === 'month' ? '月' : '年') + '聚合）' : ''));
 }
 
-function startReplay(d){
+function startReplay(d, quiet){
   if (!isDate(d)){ UI.toast('回放日期不合法'); return; }
-  if (d > TODAY){ UI.toast('不能回放未来日期'); return; }
+  if (d >= TODAY){ UI.toast('今天就是当前状态，选一个更早的日期'); return; }
+  if (d < Engine.MIN_D) d = Engine.MIN_D;
   state.replay = d;
   state.jumpTo = null;
   state.selected = null; state.focusNode = null;
   Render.all(); scrollToDate(d, true);
-  UI.toast('历史回放 · ' + ymd(d) + '（只读，真实数据不会被修改）');
+  if (!quiet) UI.toast('历史回放 · ' + ymd(d) + '（只读，真实数据不会被修改）');
+}
+/* 回放模式下按天前后移动，边界夹在「最早可见 → 昨天」之间 */
+function stepReplay(n){
+  if (!state.replay) return;
+  const last = addDays(TODAY, -1);
+  let d = addDays(state.replay, n);
+  if (d > last) d = last;
+  if (d < Engine.MIN_D) d = Engine.MIN_D;
+  if (d === state.replay) return;
+  startReplay(d, true);
 }
 function exitReplay(){
   state.replay = null;
@@ -3405,6 +3429,11 @@ function showErrors(){
     if (e.target.closest('#newBtn')){ if (isReadOnly()) { UI.toast('回放只读'); return; } formNewEvent(TODAY); return; }
     if (e.target.closest('#menuBtn')){ togglePanel(); return; }
     if (e.target.closest('.today-txt')){ state.jumpTo = null; Render.all(); scrollToDate(cutDate(), true); return; }
+    /* 回放气泡（在面板之外）：单日前后步进与退出 */
+    const rStep = e.target.closest('[data-replay-step]');
+    if (rStep){ stepReplay(Number(rStep.dataset.replayStep)); return; }
+    const rExit = e.target.closest('[data-replay-exit]');
+    if (rExit){ exitReplay(); return; }
     const vb = e.target.closest('[data-view]'); if (vb){ setView(Number(vb.dataset.view)); return; }
 
     const isoBtn = e.target.closest('[data-iso]');
@@ -3594,6 +3623,15 @@ function showErrors(){
     const jcl = e.target.closest('[data-jump-clear]');
     if (jcl){ state.jumpTo = null; Render.all(); UI.toast('已清除定位'); return; }
     const rep = e.target.closest('[data-replay]'); if (rep){ const v = document.getElementById('replayDate').value; if (v) startReplay(v); return; }
+    const rset = e.target.closest('[data-replay-set]');
+    if (rset){
+      const m = rset.dataset.replaySet;
+      const d = (m === 'month') ? addDays(TODAY.slice(0, 7) + '-01', -1) : addDays(TODAY, -Number(m));
+      const inp = document.getElementById('replayDate');
+      if (inp) inp.value = d;
+      UI.toast('已选 ' + ymd(d) + '，点「回放」查看当天状态');
+      return;
+    }
     const exit = e.target.closest('[data-replay-exit]'); if (exit){ exitReplay(); return; }
     const chk = e.target.closest('[data-check-rel]'); if (chk){ togglePanel(false); showAudit(); return; }
     const tr = e.target.closest('[data-trash-restore]');
@@ -3627,11 +3665,15 @@ function showErrors(){
       if (UI.isOpen) UI.close();
       else if (RelPop.isOpen) RelPop.close();
       else if (panelEl.classList.contains('open')) togglePanel(false);
+      else if (state.replay){ exitReplay(); }
       else if (state.isolate){ state.isolate = null; Render.all(); UI.toast('已恢复显示全部事件'); }
       else if (state.selected){ state.selected = null; state.focusNode = null; Render.all(); }
       return;
     }
     if (typing) return;
+    if (state.replay && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')){
+      e.preventDefault(); stepReplay(e.key === 'ArrowLeft' ? -1 : 1); return;
+    }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z'){ e.preventDefault(); e.shiftKey ? Hist.redo() : Hist.undo(); return; }
     if (e.key === 'n' || e.key === 'N'){ if (!isReadOnly()) formNewEvent(cutDate()); return; }
     if (e.key === 't' || e.key === 'T'){ scrollToDate(cutDate(), true); return; }
@@ -3832,7 +3874,7 @@ window.TF = {
   setData(o){ Import.apply(o, true); Render.all(); },
   refresh(){ Render.all(); },
   exportData, exportMarkdown, buildMarkdown, showImportChoice, askClear, doMenu,
-  startReplay, exitReplay, setView, commit, cutDate, findLive,
+  startReplay, exitReplay, stepReplay, setView, commit, cutDate, findLive,
   get base(){ return BASE; },
   setBaseTime(ts){ if (BASE) BASE.at = ts; return BASE; },
   today: TODAY,
