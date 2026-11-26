@@ -98,6 +98,10 @@ input,textarea,select{font-family:inherit;}
 .pmenu button{text-align:left;padding:7px 10px;border-radius:8px;font-size:12px;color:var(--ink2);}
 .pmenu button:hover{background:#F1EDE3;}
 .pmenu button.danger{color:#B4453A;}
+.pgroup-note{margin:8px 2px 0;font-size:10.5px;line-height:1.7;color:var(--muted);}
+.diff-row{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px dashed var(--line);font-size:12px;color:var(--ink2);}
+.diff-row b{font-weight:600;}
+.diff-add{color:#2F7D6D;} .diff-cut{color:#B4453A;} .diff-same{color:#8C867B;}
 
 /* ================= 轨道标题（固定） ================= */
 .laneHdr{
@@ -702,7 +706,6 @@ const SAMPLE = (() => ({
 const Persist = (() => {
   const KEY = 'timeline.v3';
   const OLD = ['timeline.v2','timeline.v1'];
-  const BAK = 'timeline.backup.v3';
   let key = KEY;                 /* 当前写入键：未登录是本机键，登录后是账号键 */
   const setKey = k => { key = k || KEY; };
   const getKey = () => key;
@@ -727,15 +730,6 @@ const Persist = (() => {
       return false;
     }
   }
-  function backup(){
-    try{ localStorage.setItem(BAK, localStorage.getItem(key) || ''); return true; }catch(e){ return false; }
-  }
-  function restoreBackup(){
-    try{
-      const raw = localStorage.getItem(BAK); if (!raw) return false;
-      const o = JSON.parse(raw); return Import.apply(o, true);
-    }catch(e){ return false; }
-  }
   function load(){
     let raw = null, src = null;
     try{ raw = localStorage.getItem(key); if (raw) src = key; }catch(e){ return { ok:false }; }
@@ -753,7 +747,7 @@ const Persist = (() => {
     Import.apply(o, true);
     return { ok:true, from: src, migrated: src !== KEY, errors: valid.errors || [], warnings: valid.warnings || [] };
   }
-  return { KEY, BAK, save, backup, load, restoreBackup, pack, setKey, getKey, userKey };
+  return { KEY, save, load, pack, setKey, getKey, userKey };
 })();
 
    /* ===================== 2.5 Cloud：账号与云端同步（Supabase） ===================== */
@@ -926,6 +920,59 @@ const Cloud = (() => {
     timer = setTimeout(() => push(), 800);
   }
 
+  /* ---- 历史版本（云端快照） ---- */
+  function fmtTime(iso){
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return `${d.getFullYear()}.${pad(d.getMonth()+1)}.${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  async function historyList(){
+    await ensureToken();
+    const rows = await api('/rest/v1/revisions?select=id,rev,created_at,data&user_id=eq.' + sess.user.id + '&order=created_at.desc&limit=20');
+    return rows || [];
+  }
+
+  async function openHistory(){
+    if (!sess){ UI.toast('登录后才能查看云端历史版本'); return; }
+    UI.toast('正在读取云端历史…');
+    let rows = [];
+    try{ rows = await historyList(); }
+    catch(err){ fail(err); UI.toast('读取历史版本失败：' + (err.message || '')); return; }
+    if (!rows.length){
+      UI.open({ title:'云端历史版本', okOnly:true, desc:'这个账号还没有云端快照。系统会在保存若干次后自动留档，之后可在这里回滚。' });
+      return;
+    }
+    const rowsHtml = rows.map((r, i) => {
+      const n = r.data && r.data.events ? r.data.events.length : 0;
+      const names = (r.data && r.data.events ? r.data.events.slice(0, 3).map(e => esc(e.title)).join('、') : '');
+      return `<div class="drow"><i style="background:#3F72A0"></i>
+        <span>${fmtTime(r.created_at)} · rev ${esc(String(r.rev))}</span>
+        <em>${n} 个事件${names ? ' · ' + names : ''}</em>
+        <button class="mini-btn" data-rev="${esc(String(r.id))}">恢复</button></div>`;
+    }).join('');
+    UI.open({ title:'云端历史版本', okOnly:true, wide:true,
+      desc:'这些是云端自动留存的快照。恢复前会先把当前数据另存为一份快照，所以不必担心找不回来。',
+      html:`<div class="dlist" id="revList">${rowsHtml}</div>` });
+    const mEl = document.getElementById('modal');
+    rows.forEach(r => {
+      const btn = mEl.querySelector(`[data-rev="${r.id}"]`);
+      if (!btn) return;
+      btn.onclick = () => {
+        UI.confirmBox('恢复历史版本', `会用 ${fmtTime(r.created_at)} 的快照覆盖当前时间线。当前数据会先自动留一份快照。`, '恢复', async () => {
+          try{
+            await api('/rest/v1/revisions', { method:'POST', headers:{ Prefer:'return=minimal' },
+              body:[{ user_id: sess.user.id, rev: readRev() || 1, data: Persist.pack() }] });
+          }catch(e){}
+          if (!Import.apply(r.data, true)){ UI.toast('这个快照数据不完整，未恢复'); return; }
+          Render.all(); scrollToDate(TODAY, false);
+          Persist.save();
+          UI.toast('已恢复到 ' + fmtTime(r.created_at) + ' 的版本');
+        });
+      };
+    });
+  }
+
   /* ---- 启动 ---- */
   function boot(){
     const s = readSession();
@@ -1009,9 +1056,11 @@ const Cloud = (() => {
       <p class="modal-desc">改动会先写本机，再自动推到云端；其他设备下次打开或点「立即同步」即可取回。</p>
       <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
         <button class="btn solid" id="accSync">立即同步</button>
+        <button class="btn ghost" id="accHistory">历史版本</button>
         <button class="btn ghost" id="accSignout">退出账号</button>
       </div>` });
     document.getElementById('accSync').onclick = () => { UI.close(); syncNow(); };
+    document.getElementById('accHistory').onclick = () => { UI.close(); openHistory(); };
     document.getElementById('accSignout').onclick = () => { UI.close(); signOut(); };
   }
 
@@ -1078,7 +1127,7 @@ const Cloud = (() => {
   const rawSave = Persist.save;
   Persist.save = function(){ const r = rawSave.apply(Persist, arguments); onSave(); return r; };
 
-  return { boot, afterLoad, login, signup, signOut, syncNow, openAccount, statusText, signedIn, email,
+  return { boot, afterLoad, login, signup, signOut, syncNow, openAccount, openHistory, statusText, signedIn, email,
     showGate, hideGate, get gateOpen(){ return !!state.gate; },
     get status(){ return status; }, get lastSync(){ return lastSync; }, get rev(){ return rev; }, CFG };
 })();
@@ -1491,7 +1540,33 @@ const Import = (() => {
     if (!v.ok) return v;
     return v;
   }
-  return { validate, apply, fromText };
+
+  /* 合并预演：只补入当前没有的事件与关系，不覆盖已有事件 */
+  function mergePlan(o){
+    const v = validate(o, { silent:true });
+    if (!v.ok) return { ok:false, errors:v.errors };
+    const incoming = (v.events || []).filter(e => e && isDate(e.start)).map(normEvent).filter(Boolean);
+    const curEv = clone(EVENTS), curLk = clone(LINKS);
+    const ids = new Set(curEv.map(e => e.id));
+    const added = [], existed = [];
+    incoming.forEach(e => { if (ids.has(e.id)) existed.push(e); else { ids.add(e.id); added.push(e); } });
+    const lset = new Set(curLk.map(l => [l.a, l.b, l.type].join('|')));
+    const lids = new Set(curLk.map(l => l.id));
+    const addedLinks = [];
+    (v.links || []).map(normLink).filter(Boolean).forEach(l => {
+      const key = [l.a, l.b, l.type].join('|');
+      if (lset.has(key)) return;
+      lset.add(key);
+      if (!l.id || lids.has(l.id)) l.id = uid('l');
+      lids.add(l.id);
+      addedLinks.push(l);
+    });
+    const events = sortEvents(curEv.concat(added));
+    const links = curLk.concat(addedLinks);
+    return { ok:true, events, links, added:added.length, existed:existed.length, addedLinks:addedLinks.length, total:incoming.length };
+  }
+
+  return { validate, apply, fromText, mergePlan };
 })();
 
 function exportData(){
@@ -1504,6 +1579,48 @@ function exportData(){
   setTimeout(() => URL.revokeObjectURL(a.href), 1200);
   UI.toast(`已导出 ${EVENTS.length} 个事件 / ${LINKS.length} 条关系`);
   return data;
+}
+
+/* 可读文本导出：一条时间线一段，便于贴进笔记或打印 */
+function buildMarkdown(){
+  const lines = ['# 时迹 · 个人事件生命线', '', `导出日期：${TODAY}`, `事件 ${EVENTS.length} 条 · 关系 ${LINKS.length} 条`, ''];
+  sortEvents(clone(EVENTS)).forEach(ev => {
+    const span = ev.end ? `${ymd(ev.start)} → ${ymd(ev.end)}` : `${ymd(ev.start)} 起 · 进行中`;
+    lines.push(`## ${ev.title}`, '', `- 时间：${span}`, `- 状态：${statusOf(ev)}${ev.category ? ' · ' + ev.category : ''}`);
+    if (ev.desc) lines.push(`- 说明：${ev.desc.replace(/\n/g, ' ')}`);
+    lines.push('');
+    const rels = LINKS.filter(l => l.a === ev.id || l.b === ev.id);
+    if (rels.length){
+      lines.push('关系：');
+      rels.forEach(l => {
+        const other = findEv(l.a === ev.id ? l.b : l.a);
+        const style = REL[l.type] || REL.ref;
+        lines.push(`- ${style.n}：${other ? other.title : '（已删除）'} · ${l.label}`);
+      });
+      lines.push('');
+    }
+    const nodes = clone(ev.nodes).sort(Domain.sortNodes);
+    if (nodes.length){
+      lines.push('进展：');
+      nodes.forEach(n => lines.push(`- ${ymd(n.date)}：${n.title}${n.text ? '（' + n.text.replace(/\n/g, ' ') + '）' : ''}`));
+      lines.push('');
+    }
+    (ev.att || []).forEach(a => lines.push(`- 附件：${a.name}${a.url ? ' · ' + a.url : ''}`));
+    lines.push('');
+  });
+  return lines.join('\n');
+}
+
+function exportMarkdown(){
+  const text = buildMarkdown();
+  const blob = new Blob([text], { type:'text/markdown;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `timeflow-${TODAY}.md`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1200);
+  UI.toast(`已导出可读文本 · ${EVENTS.length} 个事件`);
+  return text;
 }
 
 /* 视图数据源切换 */
@@ -1757,7 +1874,9 @@ const Render = (() => {
 
     if (!LANES.length){
       wrap.innerHTML = `<div class="empty-state" style="position:absolute;left:130px;top:40px;right:60px;padding:22px 24px;border:1px dashed #D8D1C2;border-radius:13px;background:rgba(251,250,246,.7);color:#8C867B;font-size:12px;line-height:1.9">
-        <b style="color:#4B473F">这里还没有事件</b><br>点击左侧日期栏任意一天，创建第一条事件生命线；也可以在右上角通过「⋯ → 恢复示例数据」载入一组示例。</div>`;
+        <b style="color:#4B473F">这里还没有事件</b><br>点击左侧日期栏任意一天，创建第一条事件生命线。${isReadOnly() ? '' : '<br><button class="btn ghost" data-load-sample style="margin-top:10px;font-size:11.5px">先载入示例看看</button>'}</div>`;
+      const sb = wrap.querySelector('[data-load-sample]');
+      if (sb) sb.onclick = () => doMenu('sample');
       return;
     }
 
@@ -2143,15 +2262,18 @@ const Render = (() => {
       <div class="pgroup">
         <h5>数据</h5>
         <div class="pmenu">
-          <button data-menu="export">导出完整数据（JSON）</button>
-          <button data-menu="import">导入数据（校验后原子替换）</button>
-          <button data-menu="backup">立即备份到本地</button>
-          <button data-menu="restore-backup">从备份恢复</button>
-          <button data-menu="sample">恢复示例数据</button>
-          <button data-menu="clear" class="danger">清空全部数据</button>
+          <button data-menu="export">导出备份文件（JSON）</button>
+          <button data-menu="export-md">导出可读文本（Markdown）</button>
+          <button data-menu="import">导入（合并或替换）</button>
+          ${Cloud.signedIn() ? '<button data-menu="history">云端历史版本</button>' : ''}
         </div>
         <div class="prow" style="margin-top:8px"><span>存储</span><span style="font-size:10.5px">${state.save==='ok'?'已保存':'<b style="color:#B4453A">保存失败</b>'}</span></div>
         <div class="prow"><span>规模</span><span style="font-size:10.5px">${EVENTS.length} 事件 / ${EVENTS.reduce((s,e)=>s+e.nodes.length,0)} 节点</span></div>
+      </div>
+      <div class="pgroup">
+        <h5>危险区</h5>
+        <div class="pmenu"><button data-menu="clear" class="danger">清空全部数据…</button></div>
+        <p class="pgroup-note">清空会先自动导出一份备份文件，仍需输入确认词。</p>
       </div>
       <div class="pgroup">
         <h5>帮助</h5>
@@ -2767,6 +2889,18 @@ const Actions = (() => {
 
   function replaceAll(o){ return Import.apply(o); }
 
+  /* 合并导入：保留现有事件，只补入文件里多出来的部分 */
+  function mergeImport(o){
+    if (isReadOnly()){ UI.toast('回放只读'); return false; }
+    const plan = Import.mergePlan(o);
+    if (!plan.ok) return false;
+    Hist.push();
+    const applied = Import.apply({ schema:'timeflow', version:3, events:plan.events, links:plan.links }, true);
+    if (!applied) return false;
+    Persist.save(); Render.all();
+    return plan;
+  }
+
   function clearAll(){
     if (isReadOnly()){ UI.toast('回放只读'); return false; }
     Hist.push();
@@ -2786,7 +2920,7 @@ const Actions = (() => {
 
   return { createEvent, updateEvent, addNode, updateNode, moveNode, deleteNode, createBranch, endEvent, reopen,
     removeEvent, restoreTrash, setResult, attach, detach, link, updateLink, unlink,
-    replaceAll, clearAll, loadSample };
+    replaceAll, mergeImport, clearAll, loadSample };
 })();
 
 /* ===================== 12. 滚动与视图工具 ===================== */
@@ -3453,35 +3587,78 @@ function doMenu(k){
   if (k === 'account'){ togglePanel(false); Cloud.openAccount(); return; }
   if (k === 'sync-now'){ Cloud.syncNow(); return; }
   if (k === 'export') return exportData();
+  if (k === 'export-md') return exportMarkdown();
   if (k === 'import'){ togglePanel(false); fileInput.click(); return; }
+  if (k === 'history'){ togglePanel(false); Cloud.openHistory(); return; }
   if (k === 'undo'){ Hist.undo(); return; }
   if (k === 'redo'){ Hist.redo(); return; }
   if (k === 'trash'){ showTrash(); return; }
   if (k === 'keys'){ showKeys(); return; }
   if (k === 'errors'){ showErrors(); return; }
-  if (k === 'backup'){
-    const ok = Persist.backup();
-    UI.toast(ok ? '已备份到本地（键 ' + Persist.BAK + '）' : '备份失败：本地存储不可用');
-    return;
-  }
-  if (k === 'restore-backup'){
-    UI.confirmBox('从备份恢复', '会用上一次备份覆盖当前数据，建议先导出。', '恢复', () => {
-      if (Persist.restoreBackup()){ Persist.save(); Render.all(); UI.toast('已从备份恢复'); }
-      else UI.toast('没有可用备份');
-    });
-    return;
-  }
   if (k === 'sample'){
-    UI.confirmBox('恢复示例数据', '替换当前全部事件？可撤销（Ctrl+Z）。', '替换', () => {
-      Actions.loadSample(); scrollToDate(TODAY, false); UI.toast('已恢复示例数据');
+    UI.confirmBox('载入示例数据', '示例会替换当前内容（当前为空），之后可 Ctrl+Z 撤销。', '载入', () => {
+      Actions.loadSample(); scrollToDate(TODAY, false); UI.toast('已载入示例数据');
     });
     return;
   }
-  if (k === 'clear'){
-    UI.confirmBox('清空全部数据', '清空事件、关系与回收站？建议先导出备份，操作可撤销。', '清空', () => {
-      Actions.clearAll(); UI.toast('已清空');
+  if (k === 'clear'){ askClear(); return; }
+}
+
+/* 清空：先自动导出，再要求输入确认词 */
+function askClear(){
+  if (!EVENTS.length && !LINKS.length && !TRASH.length){ UI.toast('当前没有可清空的数据'); return; }
+  UI.open({ title:'清空全部数据', ok:'确认清空', cancel:'取消',
+    desc:'会先自动导出一份 JSON 备份到下载目录，然后清空事件、关系与回收站。清空后仍可用 Ctrl+Z 撤销。',
+    html:`<p class="modal-desc">当前 ${EVENTS.length} 个事件、${LINKS.length} 条关系。请输入「清空」两个字确认。</p>
+      <div class="field"><input type="text" id="clearWord" placeholder="清空" autocomplete="off"></div>
+      <div class="gate-msg" id="clearErr"></div>`,
+    onSubmit(){
+      const w = ((document.getElementById('clearWord') || {}).value || '').trim();
+      if (w !== '清空'){ const er = document.getElementById('clearErr'); if (er) er.textContent = '请输入「清空」两个字'; return; }
+      exportData();                    /* 自动留一份文件备份 */
+      UI.close();
+      Actions.clearAll();
+      UI.toast('已清空 · 备份文件已下载');
+    } });
+}
+
+/* 导入：先给出差异与两种方式 */
+function showImportChoice(text, v){
+  const incoming = v.events.filter(e => e && isDate(e.start));
+  const curIds = new Set(EVENTS.map(e => e.id));
+  const inIds = new Set(incoming.map(e => e.id).filter(Boolean));
+  const add = incoming.filter(e => e.id && !curIds.has(e.id)).length;
+  const same = incoming.length - add;
+  const drop = EVENTS.filter(e => e.id && !inIds.has(e.id)).length;
+  UI.open({ title:'导入数据', okOnly:true, wide:true,
+    desc:'文件校验通过。可以选择只补入缺少的部分（保留现有记录），或整库替换。',
+    html:`<div class="dlist">
+        <div class="diff-row"><span>文件里的事件</span><b>${incoming.length}</b></div>
+        <div class="diff-row"><span class="diff-add">合并时新增</span><b class="diff-add">${add}</b></div>
+        <div class="diff-row"><span class="diff-same">已存在（合并时保留现有）</span><b class="diff-same">${same}</b></div>
+        <div class="diff-row"><span class="diff-cut">替换时会被删除</span><b class="diff-cut">${drop}</b></div>
+        <div class="diff-row"><span>关系</span><b>${(v.links || []).length}</b></div>
+      </div>
+      ${v.warnings.length ? `<div class="dlist" style="margin-top:10px">${v.warnings.map(x => `<div class="audit-item"><b>!</b><span>${esc(x)}</span></div>`).join('')}</div>` : ''}
+      <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
+        <button class="btn solid" id="impMerge">合并导入（补入 ${add} 条）</button>
+        <button class="btn ghost" id="impReplace">替换全部数据</button>
+      </div>` });
+  const merge = document.getElementById('impMerge');
+  const replace = document.getElementById('impReplace');
+  if (merge) merge.onclick = () => {
+    UI.close();
+    const r = Actions.mergeImport(JSON.parse(text));
+    if (r){ scrollToDate(TODAY, false); UI.toast(`已合并 ${r.added} 条事件、${r.addedLinks} 条关系，现有记录保留`); }
+    else UI.toast('合并失败，原有数据保持不变');
+  };
+  if (replace) replace.onclick = () => {
+    UI.close();
+    UI.confirmBox('替换全部数据', `会用文件内容覆盖当前 ${EVENTS.length} 个事件，当前数据将被移除（可 Ctrl+Z 撤销，建议先导出）。`, '确认替换', () => {
+      if (Actions.replaceAll(JSON.parse(text))){ scrollToDate(TODAY, false); UI.toast('已替换为 ' + EVENTS.length + ' 个事件'); }
+      else UI.toast('替换失败，原有数据保持不变');
     });
-  }
+  };
 }
 
 fileInput.addEventListener('change', e => {
@@ -3497,20 +3674,7 @@ fileInput.addEventListener('change', e => {
         html:`<div class="dlist">${v.errors.map(x => `<div class="audit-item"><b>✕</b><span>${esc(x)}</span></div>`).join('')}</div>` });
       return;
     }
-    if (v.warnings.length){
-      UI.open({ title:'导入前确认', wide:true, desc:'以下内容会被规范化处理，确认后执行原子替换。', ok:'确认导入', cancel:'取消',
-        html:`<div class="dlist">${v.warnings.map(x => `<div class="audit-item"><b>!</b><span>${esc(x)}</span></div>`).join('')}</div>
-              <p class="modal-desc">将导入 ${v.events.length} 个事件、${(v.links||[]).length} 条关系。</p>`,
-        onSubmit(){
-          UI.close();
-          if (Actions.replaceAll(JSON.parse(reader.result))){ scrollToDate(TODAY, false); UI.toast('已导入 ' + EVENTS.length + ' 个事件'); }
-          else UI.toast('导入失败，原有数据保持不变');
-        } });
-      return;
-    }
-    const ok = Actions.replaceAll(JSON.parse(reader.result));
-    if (ok){ scrollToDate(TODAY, false); UI.toast('已导入 ' + EVENTS.length + ' 个事件'); }
-    else UI.toast('导入失败，原有数据保持不变');
+    showImportChoice(String(reader.result), v);
   };
   reader.readAsText(f);
 });
@@ -3557,6 +3721,7 @@ window.TF = {
   get journal(){ return JOURNAL; }, get viewEvents(){ return VIEW_EVENTS; }, get viewLinks(){ return VIEW_LINKS; },
   setData(o){ Import.apply(o, true); Render.all(); },
   refresh(){ Render.all(); },
+  exportData, exportMarkdown, buildMarkdown, showImportChoice, askClear, doMenu,
   startReplay, exitReplay, setView, commit, cutDate, findLive,
   get base(){ return BASE; },
   setBaseTime(ts){ if (BASE) BASE.at = ts; return BASE; },
