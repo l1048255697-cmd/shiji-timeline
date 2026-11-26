@@ -748,7 +748,8 @@ const Persist = (() => {
     if (!valid.ok){ Log.err('本地数据校验失败', { errors: valid.errors }); }
     /* 即使有告警也尽量载入（尽最大可能保住用户数据） */
     Import.apply(o, true);
-    return { ok:true, from: src, migrated: src !== KEY, errors: valid.errors || [], warnings: valid.warnings || [] };
+    /* 只有从旧版键（v1/v2）读到的数据才算迁移；账号键不算 */
+    return { ok:true, from: src, migrated: OLD.includes(src), errors: valid.errors || [], warnings: valid.warnings || [] };
   }
   return { KEY, save, load, pack, setKey, getKey, userKey };
 })();
@@ -1003,7 +1004,7 @@ const Cloud = (() => {
       writeSession(null);
       Persist.setKey(Persist.KEY);
       const r = Persist.load();
-      if (!r.ok) Import.apply({ schema:'timeflow', version:3, events: clone(SAMPLE.events), links: clone(SAMPLE.links) }, true);
+      if (!r.ok) Import.apply({ schema:'timeflow', version:3, events:[], links:[] }, true);
       Render.all(); UI.toast('已退出账号');
       showGate();
     });
@@ -3758,9 +3759,7 @@ fileInput.addEventListener('change', e => {
   Cloud.boot();
   if (!Cloud.signedIn()) Cloud.showGate();
   const loaded = Persist.load();
-  if (!loaded.ok || !EVENTS.length){
-    Import.apply({ schema:'timeflow', version:3, events: clone(SAMPLE.events), links: clone(SAMPLE.links) }, true);
-  }
+  /* 空数据不自动塞示例：交给空白状态里的「先载入示例看看」，避免示例混进真实账号 */
   if (!Journal.base()) Journal.setBase();
   Engine.setView(state.view);
   refillMeta();
