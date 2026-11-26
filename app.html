@@ -206,7 +206,7 @@ input,textarea,select{font-family:inherit;}
 .mk svg{width:18px;height:18px;display:block;pointer-events:none;}
 .mk-start{background:#139A62;}
 .mk-end{background:#D93F3A;cursor:pointer;}
-.mk-live{background:#2F72E4;animation:mkPulse 2.4s ease-out infinite;}
+.mk-live{background:#2F72E4;cursor:pointer;animation:mkPulse 2.4s ease-out infinite;}
 @keyframes mkPulse{0%{box-shadow:0 1px 4px -1px rgba(30,28,25,.35),0 0 0 0 rgba(47,114,228,.35);}70%{box-shadow:0 1px 4px -1px rgba(30,28,25,.35),0 0 0 11px rgba(47,114,228,0);}100%{box-shadow:0 1px 4px -1px rgba(30,28,25,.35),0 0 0 0 rgba(47,114,228,0);}}
 .mk:hover{transform:translate(-50%,-50%) scale(1.12);}
 .end-cap{position:absolute;z-index:5;white-space:nowrap;font-size:9.5px;color:var(--muted);}
@@ -537,7 +537,7 @@ input,textarea,select{font-family:inherit;}
 <input type="file" id="fileInput" accept=".json,application/json" style="display:none">
 
 <div class="hintbar">
-  <b>点日期</b>建事件 <i></i> <b>点生命线</b>加进展 <i></i> <b>拖圆点</b>改日期 <i></i> <b>点节点</b>看详情 <i></i> <b>Ctrl+滚轮</b>缩放 <i></i> <b>Ctrl+Z</b> 撤销 <i></i> <b>T</b> 今天 <i></i> <b>⋯</b> 设置与数据
+  <b>点日期</b>建事件 <i></i> <b>点生命线</b>加进展 <i></i> <b>点蓝箭头</b>记今天 <i></i> <b>拖圆点</b>改日期 <i></i> <b>点节点</b>看详情 <i></i> <b>Ctrl+滚轮</b>缩放 <i></i> <b>Ctrl+Z</b> 撤销 <i></i> <b>T</b> 今天 <i></i> <b>⋯</b> 设置与数据
 </div>
 
 <script>
@@ -2006,7 +2006,7 @@ const Render = (() => {
           }).join('');
         const cmark = ended
           ? `<div class="mk mk-end" data-ev="${ev.id}" data-end="1" style="top:${endY}px;left:${cx}px" title="事件正式结束 ${ymd(ev.end)}">${SQ_MK}</div>`
-          : (notStarted ? '' : `<div class="mk mk-live" style="top:${endY}px;left:${cx}px" title="进行中 · 生命线延伸至今天">${AR_MK}</div>`);
+          : (notStarted ? '' : `<div class="mk mk-live" data-ev="${ev.id}" data-add-today="1" style="top:${endY}px;left:${cx}px" title="进行中 · 点在箭头记录今天（${ymd(TODAY)}）的进展">${AR_MK}</div>`);
         html += `<div class="lane collapsed ${state.selected===ev.id?'sel':''}" data-id="${ev.id}" data-open="${ev.id}"
             style="left:${l.x}px;width:${l.w}px;--c:${c};--c15:${hexA(c,.14)};--c30:${hexA(c,.32)}">
           <div class="ribbon" style="left:${l.w/2-1.5}px;width:3px;top:${startY}px;height:${Math.max(endY-startY,2)}px"></div>
@@ -2058,7 +2058,7 @@ const Render = (() => {
       const endY2 = endY;
       const marker = (ended
         ? `<div class="mk mk-end" data-ev="${ev.id}" data-end="1" style="top:${endY2}px;left:30px" title="事件正式结束 ${ymd(ev.end)}">${SQ_MK}</div>${!hasEndNode ? `<div class="end-cap" data-ev="${ev.id}" style="top:${endY2 - 7}px;left:44px;cursor:pointer" title="点击查看最终结果"><b>结束 ${ymd(ev.end)}</b></div>` : ''}`
-        : (notStarted ? '' : `<div class="mk mk-live" style="top:${endY2}px;left:30px" title="进行中 · 生命线延伸至今天">${AR_MK}</div>`));
+        : (notStarted ? '' : `<div class="mk mk-live" data-ev="${ev.id}" data-add-today="1" style="top:${endY2}px;left:30px" title="进行中 · 点在箭头记录今天（${ymd(TODAY)}）的进展">${AR_MK}</div>`));
 
       const compact = Engine.dayBase < 20;
       const chipH = compact ? 30 : 56;
@@ -3589,6 +3589,13 @@ function showErrors(){
     if (chip){ selectEvent(chip.dataset.ev); return; }
     const endSq = e.target.closest('.mk-end') || e.target.closest('.end-cap') || e.target.closest('[data-end]');
     if (endSq){ selectEvent(endSq.dataset.ev); return; }
+    /* 进行中的蓝色箭头：点它就是「记下今天的进展」，日期直接落在今天 */
+    const liveMk = e.target.closest('.mk-live');
+    if (liveMk){
+      if (isReadOnly()){ UI.toast('回放只读'); return; }
+      formAddProgress(liveMk.dataset.ev, cutDate());
+      return;
+    }
     const relHit = e.target.closest('.relhit');
     if (relHit){ RelPop.open(relHit.dataset.rel, e.clientX, e.clientY); return; }
     const laneOpen = e.target.closest('.lane[data-open]');
