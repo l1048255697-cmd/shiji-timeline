@@ -344,6 +344,8 @@ input,textarea,select{font-family:inherit;}
 .gate-foot{font-size:10px;color:var(--muted);line-height:1.8;margin:14px 0 0;text-align:center;}
 .modal-card{width:480px;max-height:86vh;overflow:auto;background:var(--bg2);border-radius:14px;box-shadow:0 40px 80px -30px rgba(30,28,25,.5);border:1px solid var(--line);animation:rise .22s ease-out both;}
 @keyframes rise{from{opacity:0;transform:translateY(10px) scale(.985);}to{opacity:1;transform:none;}}
+.modal-card.need-save{animation:nudge .42s ease-in-out;border-color:#D9A79F;}
+@keyframes nudge{0%,100%{transform:none}20%{transform:translateX(-7px)}45%{transform:translateX(6px)}70%{transform:translateX(-4px)}}
 .modal-head{display:flex;align-items:center;justify-content:space-between;padding:18px 20px 0;}
 .modal-head h3{font-family:'Noto Serif SC',serif;font-size:16.5px;margin:0;font-weight:600;letter-spacing:.04em;}
 .modal-desc{font-size:11px;color:var(--muted);margin:7px 20px 0;line-height:1.6;}
@@ -2748,7 +2750,29 @@ const UI = (() => {
       modalEl.querySelectorAll('[data-key-hidden]').forEach(el => vals[el.dataset.keyHidden] = el.value);
       if (submitHandler) submitHandler(vals);
     };
+    /* 记录初始值，用于判断“有没有改过” */
+    modalEl.querySelectorAll('[data-key],[data-key-hidden]').forEach(el => {
+      if (['INPUT','TEXTAREA','SELECT'].includes(el.tagName)) el.dataset.init = el.value;
+    });
     setTimeout(() => { const i = modalEl.querySelector('input[type=text],textarea'); if (i) i.focus(); }, 60);
+  }
+  function isDirty(){
+    if (!modalEl.classList.contains('open')) return false;
+    let dirty = false;
+    modalEl.querySelectorAll('[data-key],[data-key-hidden]').forEach(el => {
+      if (!['INPUT','TEXTAREA','SELECT'].includes(el.tagName)) return;
+      if ((el.dataset.init == null ? '' : el.dataset.init) !== el.value) dirty = true;
+    });
+    return dirty;
+  }
+  function nudge(){
+    const card = modalEl.querySelector('.modal-card');
+    if (!card) return;
+    card.classList.remove('need-save');
+    void card.offsetWidth;
+    card.classList.add('need-save');
+    setTimeout(() => card.classList.remove('need-save'), 700);
+    toast('还有未保存的修改 · 点「保存」或「取消」');
   }
   function close(){ modalEl.classList.remove('open'); modalEl.innerHTML = ''; submitHandler = null; }
 
@@ -2758,7 +2782,11 @@ const UI = (() => {
       html: opt.html || '', onSubmit(){ close(); onOk && onOk(); } });
   }
 
-  modalEl.addEventListener('click', e => { if (e.target === modalEl) close(); });
+  modalEl.addEventListener('click', e => {
+    if (e.target !== modalEl) return;
+    if (isDirty()){ nudge(); return; }   /* 有未保存修改时，点四周不丢弃 */
+    close();
+  });
   modalEl.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey && e.target.tagName !== 'TEXTAREA'){
       const ok = document.getElementById('modalOk');
@@ -2766,7 +2794,7 @@ const UI = (() => {
     }
   });
 
-  return { toast, open, close, confirmBox, get isOpen(){ return modalEl.classList.contains('open'); } };
+  return { toast, open, close, confirmBox, isDirty, nudge, get isOpen(){ return modalEl.classList.contains('open'); } };
 })();
 
 /* 关系浮层 */
@@ -3751,7 +3779,7 @@ function showErrors(){
     if (state.gate) return;
     const typing = ['INPUT','TEXTAREA','SELECT'].includes((e.target || {}).tagName);
     if (e.key === 'Escape'){
-      if (UI.isOpen) UI.close();
+      if (UI.isOpen){ if (UI.isDirty()) UI.nudge(); else UI.close(); }
       else if (RelPop.isOpen) RelPop.close();
       else if (panelEl.classList.contains('open')) togglePanel(false);
       else if (state.replay){ exitReplay(); }
